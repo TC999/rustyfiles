@@ -2294,11 +2294,14 @@ impl Workspace {
 
     /// Searches the active tab's folder and its subfolders for `q`, and remembers the search.
     fn run_search(&mut self, q: String, window: &mut Window, cx: &mut Context<Self>) {
+        // (a page that is no folder, Home: every indexed drive, the empty root; it searched nothing at all before, issue 377)
         let root = match self.active_tab().read(cx).location() {
-            Location::Search { root, .. } => Some(root.clone()),
-            l => l.path().map(Path::to_path_buf),
+            Location::Search { root, .. } => root.clone(),
+            l => l.path().map(Path::to_path_buf).unwrap_or_default(),
         };
-        let (false, Some(root)) = (q.is_empty(), root) else { return };
+        if q.is_empty() {
+            return;
+        }
         crate::settings::update(cx, |s| remember_search(&mut s.search_history, &q));
         self.active_tab().clone().update(cx, |v, cx| v.navigate(Location::Search { root, query: q }, cx));
         self.focus_active(window, cx);
@@ -3415,8 +3418,9 @@ impl Workspace {
             tab.update(cx, |v, cx| {
                 v.set_query(String::new(), cx);
                 // leave a recursive search result back to its folder
+                // (a search started on Home has no folder: back to Home)
                 if let Location::Search { root, .. } = v.location().clone() {
-                    v.navigate(Location::Path(root), cx);
+                    v.navigate(if root.as_os_str().is_empty() { Location::Home } else { Location::Path(root) }, cx);
                 }
             });
         }
