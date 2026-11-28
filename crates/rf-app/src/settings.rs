@@ -230,7 +230,28 @@ pub enum MenuMaterial {
     Glass,
 }
 
+/// The size of the command bar's pictures (issue 248).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolbarIconSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
 impl MenuMaterial {
+    /// For the popups that are not menus (the View flyout, the Status Center: issue 380, they did not follow the setting): what a
+    /// popup that would draw `auto_liquid` glass, and an opaque card in the Explorer look (`explorer`), gets with this material.
+    /// Automatic keeps each one as it was (`None`); another choice gives (glass, backdrop, opaque card).
+    pub fn for_panel(self, auto_liquid: bool, explorer: bool, materials: bool) -> Option<(bool, WindowBackgroundAppearance, bool)> {
+        if self == Self::Automatic {
+            return None;
+        }
+        let (liquid, bg) = self.resolve(auto_liquid, explorer, materials);
+        Some((liquid, bg, bg == WindowBackgroundAppearance::Opaque))
+    }
+
     /// Whether to draw HyperGlass and what backdrop the popup requests before OS fallback.
     pub fn resolve(self, auto_liquid: bool, auto_opaque: bool, materials: bool) -> (bool, WindowBackgroundAppearance) {
         use WindowBackgroundAppearance::{Blurred, MicaAltBackdrop, MicaBackdrop, Opaque, Transparent};
@@ -370,6 +391,9 @@ impl Default for MenuPrefs {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ColumnPrefs {
+    /// The order of the Details columns after Name, by name (`folder_view::ColKey`), as dragged by their headers. A column it does
+    /// not name stands in its default place after the named ones; empty: the default order.
+    pub order: Vec<String>,
     pub modified: bool,
     pub created: bool,
     pub kind: bool,
@@ -416,6 +440,7 @@ fn is_zero_u16(v: &u16) -> bool {
 impl Default for ColumnPrefs {
     fn default() -> Self {
         Self {
+            order: Vec::new(),
             modified: true,
             created: false,
             kind: true,
@@ -514,6 +539,18 @@ pub struct Settings {
     /// Buttons of the command bar that are off unless asked for ("newfolder", "terminal",
     /// "hidden", "refresh").
     pub toolbar_extra: Vec<String>,
+    /// The order of the command bar's left group, with "sep" for a line (`toolbar_layout`; issues 373, 248, 258). Empty: the
+    /// default order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolbar_order: Vec<String>,
+    /// How each command bar button is shown, "name=icon|text|both" (`toolbar_layout::Look`, issue 374). A button not named here is
+    /// drawn as it always was.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub toolbar_look: Vec<String>,
+    /// The size of the command bar's pictures (issue 248).
+    pub toolbar_icon_size: ToolbarIconSize,
+    /// The command bar's pictures are Windows' own (the Explorer look's) in the other look too (issue 382). Off.
+    pub toolbar_windows_icons: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub toolbar_commands: Vec<crate::quick_commands::QuickCommand>,
     pub preview_width: f32,
@@ -611,6 +648,8 @@ pub struct Settings {
     pub new_tab_opens: NewTabOpens,
     /// A new tab (Ctrl+T, the + button) puts the keyboard in the address bar, ready for a typed or pasted path (issue 240).
     pub new_tab_address: bool,
+    /// Settings and the Recycle Bin open in a tab of their own instead of the tab in front, so its folder is not left (issue 386). Off.
+    pub pages_in_new_tab: bool,
     /// The details shown when the pointer rests on an item (size, dates, a picture's size). Issue 264: some find them in the way.
     pub item_hover_details: bool,
     /// A folder opened from outside (Win+E, the desktop, another program) gets a window of its own instead of a tab in the newest
@@ -846,6 +885,9 @@ pub struct Settings {
     pub dock_autohide_windows: bool,
     /// The dock's islands on a solid fill instead of the glass (off; issue 113).
     pub dock_opaque: bool,
+    /// The glass's tone follows what is behind it (on): light glass with dark text over a bright page. Off: the theme alone decides,
+    /// glass or not (issue 388: "the dark theme randomly resets to light" over a bright window).
+    pub dock_adaptive_tone: bool,
     /// The Dock without its motions and on a solid fill: less work while a game keeps the graphics card busy (issue 133).
     pub dock_performance: bool,
     /// A thin "Show desktop" strip at the right end of the primary monitor's right island, after the bell, as on Windows' taskbar (off;
@@ -987,6 +1029,10 @@ impl Default for Settings {
             recent_cleared_ms: 0,
             search_history: Vec::new(),
             toolbar_hidden: Vec::new(),
+            toolbar_order: Vec::new(),
+            toolbar_look: Vec::new(),
+            toolbar_icon_size: ToolbarIconSize::Medium,
+            toolbar_windows_icons: false,
             toolbar_extra: Vec::new(),
             toolbar_commands: Vec::new(),
             preview_width: 300.,
@@ -1028,6 +1074,7 @@ impl Default for Settings {
             focus_new_tab: false,
             new_tab_opens: NewTabOpens::Home,
             new_tab_address: false,
+            pages_in_new_tab: false,
             item_hover_details: true,
             launch_in_new_window: false,
             sessions_in_this_window: false,
@@ -1140,6 +1187,7 @@ impl Default for Settings {
             dock_autohide: false,
             dock_autohide_windows: false,
             dock_opaque: false,
+            dock_adaptive_tone: true,
             dock_performance: false,
             dock_show_desktop: false,
             dock_labels: false,

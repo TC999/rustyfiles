@@ -13391,5 +13391,113 @@
   "key": "Bağlam menülerinin ve açılır listelerin arka planını belirler. Renkler seçili temayı izler.",
   "tr": "Bağlam menülerinin ve açılır listelerin arka planını belirler. Renkler seçili temayı izler.",
   "en": "Sets the background of context menus and dropdown lists. Colors follow the selected theme."
+ },
+ {
+  "id": "279e7bd2",
+  "key": "Cam, arkasındakine göre açılıp koyulaşsın",
+  "tr": "Cam, arkasındakine göre açılıp koyulaşsın",
+  "en": "Glass follows what is behind it"
+ },
+ {
+  "id": "4ac9d922",
+  "key": "Açıkken parlak bir pencerenin ya da duvar kâğıdının önünde ada açık renk cama ve koyu yazıya geçer. Kapalıyken cam her zaman temayı izler.",
+  "tr": "Açıkken parlak bir pencerenin ya da duvar kâğıdının önünde ada açık renk cama ve koyu yazıya geçer. Kapalıyken cam her zaman temayı izler.",
+  "en": "On: over a bright window or wallpaper an island turns to light glass with dark text. Off: the glass always follows the theme."
+ },
+ {
+  "id": "c7b98217",
+  "key": "oturum açılamadı",
+  "tr": "oturum açılamadı",
+  "en": "could not log in"
+ },
+ {
+  "id": "c6b76004",
+  "key": "bağlantı kesildi",
+  "tr": "bağlantı kesildi",
+  "en": "the connection was lost"
+ },
+ {
+  "id": "3e4b9013",
+  "key": "bağlantı sunucu tarafından sıfırlandı",
+  "tr": "bağlantı sunucu tarafından sıfırlandı",
+  "en": "the server reset the connection"
+ },
+ {
+  "id": "53d85cf8",
+  "key": "sunucu isteği reddetti",
+  "tr": "sunucu isteği reddetti",
+  "en": "the server refused the request"
+ },
+ {
+  "id": "50c83481",
+  "key": "FTP oturumu iptal edildi",
+  "tr": "FTP oturumu iptal edildi",
+  "en": "the FTP session was cancelled"
+ },
+ {
+  "id": "bd3c41cf",
+  "key": "Ayarlar ve Geri Dönüşüm Kutusu yeni sekmede açılsın",
+  "tr": "Ayarlar ve Geri Dönüşüm Kutusu yeni sekmede açılsın",
+  "en": "Open Settings and the Recycle Bin in a new tab"
+ },
+ {
+  "id": "32e6819a",
+  "key": "Açık klasör yerinde kalır. Giriş sayfasından ya da bu iki sayfadan birinden açılınca aynı sekmede açılırlar.",
+  "tr": "Açık klasör yerinde kalır. Giriş sayfasından ya da bu iki sayfadan birinden açılınca aynı sekmede açılırlar.",
+  "en": "The open folder stays where it is. From Home or from one of the two pages they open in the same tab."
+ },
+ {
+  "id": "8872682e",
+  "key": "Windows'un Aç / Kaydet penceresini alan programlar",
+  "tr": "Windows'un Aç / Kaydet penceresini alan programlar",
+  "en": "Programs that get Windows' own Open / Save window"
+ },
+ {
+  "id": "c1ba122b",
+  "key": "Bu kısayolu değiştirmek yönetici izni ister",
+  "tr": "Bu kısayolu değiştirmek yönetici izni ister",
+  "en": "Changing this shortcut needs administrator rights"
+ },
+ {
+  "id": "efdcd320",
+  "key": "Yazı",
+  "tr": "Yazı",
+  "en": "Text"
+ },
+ {
+  "id": "9a6fe2c6",
+  "key": "Simge ve yazı",
+  "tr": "Simge ve yazı",
+  "en": "Icon and text"
+ },
+ {
+  "id": "c684c8a9",
+  "key": "Ayırıcı",
+  "tr": "Ayırıcı",
+  "en": "Separator"
+ },
+ {
+  "id": "976b42f8",
+  "key": "Ayırıcı ekle",
+  "tr": "Ayırıcı ekle",
+  "en": "Add a separator"
+ },
+ {
+  "id": "4cc75906",
+  "key": "Varsayılan sıra",
+  "tr": "Varsayılan sıra",
+  "en": "Default order"
+ },
+ {
+  "id": "4e935827",
+  "key": "Windows simgeleri",
+  "tr": "Windows simgeleri",
+  "en": "Windows icons"
+ },
+ {
+  "id": "a2e62d37",
+  "key": "Araç çubuğunda Windows Dosya Gezgini'nin simgeleri",
+  "tr": "Araç çubuğunda Windows Dosya Gezgini'nin simgeleri",
+  "en": "Windows File Explorer's icons on the toolbar"
  }
 ]

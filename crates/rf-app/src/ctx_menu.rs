@@ -92,7 +92,17 @@ impl FolderView {
         let background = background || items.is_empty();
         let me = cx.entity().downgrade();
         let menu = if background { self.background_menu(&me, &dir, cx) } else { self.items_menu(&me, &dir, &items, cx) };
-        let menu_view = fluent_menu::show_context(menu, window.mouse_position(), window, cx);
+        // "Show more options": held back where it came back empty the last time for the same kind of item, so that it does not show
+        // for a moment and go (issue 368); it is added when something comes after all. (Not with the shell's items in the menu
+        // itself: there is no row to hold back.) It is taken out before the menu's window is made: taken out after, the window
+        // opened with its height and then shrank.
+        let more_key = more_kind(background, &items);
+        let inline_more = !cx.global::<crate::settings::Settings>().menu.shell_submenu;
+        let menu_view = if !inline_more && more_was_empty(&more_key) {
+            fluent_menu::show_context_holding(menu, window.mouse_position(), "more", window, cx)
+        } else {
+            fluent_menu::show_context(menu, window.mouse_position(), window, cx)
+        };
 
         // Shell items in the background: QueryContextMenu can take a second with slow extensions.
         let target = if background { ShellTarget::Background(dir.clone()) } else { ShellTarget::Items(items.clone()) };
@@ -144,6 +154,9 @@ impl FolderView {
                 };
                 let open_with = with_own_programs(&me, own, open_with);
                 let more = with_packaged(packaged, more, cx.global::<crate::settings::Settings>().menu.prefer_classic_commands);
+                if let Pending::Ready(v) = &more {
+                    remember_more(more_key.clone(), v.is_empty());
+                }
                 let inline = !cx.global::<crate::settings::Settings>().menu.shell_submenu;
                 if let Some(m) = menu_weak.upgrade() {
                     m.update(cx, |m, cx| {
@@ -211,7 +224,7 @@ impl FolderView {
                 .first()
                 .and_then(|path| {
                     let parsing = path.to_string_lossy();
-                    self.images.update(cx, |images, cx| images.shell_icon(&parsing, 16, cx))
+                    self.images.update(cx, |images, cx| images.shell_icon_ui(&parsing, 16, cx))
                 })
                 .map(MenuIcon::Image)
                 .unwrap_or_else(|| {
@@ -829,6 +842,8 @@ impl FolderView {
                         |w, cx| w.dispatch_action(Box::new(crate::actions::GoSettings), cx),
                     )
                     .hint("Ctrl+,"),
+                    // (closing the window leaves rustyfiles running with background mode or the Dock: issue 410)
+                    Item::action(t!("Çıkış"), icon(L::LogOut), |_, cx| cx.defer(crate::background::quit_all)),
                 ]
             }
             BarMenu::Sort => {
@@ -1124,10 +1139,36 @@ fn open_terminal(d: PathBuf) {
     });
 }
 
+/// The kind of thing a menu is for, as far as "Show more options" goes: the folder's background, or an item by its extension (the
+/// shell's commands for an item depend on its type; a folder and a file without one are one kind here, as the disk is not asked on
+/// the interface's thread). Pure.
+fn more_kind(background: bool, items: &[PathBuf]) -> String {
+    if background {
+        return "<background>".into();
+    }
+    match items {
+        [one] => one.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_else(|| "<none>".into()),
+        _ => "<several>".into(),
+    }
+}
+
+static MORE_EMPTY: std::sync::LazyLock<parking_lot::Mutex<std::collections::HashMap<String, bool>>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(std::collections::HashMap::new()));
+
+/// Whether "Show more options" came back empty the last time for this kind of item.
+fn more_was_empty(kind: &str) -> bool {
+    MORE_EMPTY.lock().get(kind).copied().unwrap_or(false)
+}
+
+fn remember_more(kind: String, empty: bool) {
+    MORE_EMPTY.lock().insert(kind, empty);
+}
+
 /// "<name> - Kısayol.lnk" next to each item (unique name), like Explorer's "Create shortcut".
 fn create_shortcuts(items: Vec<PathBuf>) {
     std::thread::spawn(move || {
         rf_win::shell::ensure_com();
+        let mut made = Vec::new();
         for target in items {
             let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else { continue };
             let base = format!("{} - {}", name.to_string_lossy(), t!("Kısayol"));
@@ -1137,9 +1178,14 @@ fn create_shortcuts(items: Vec<PathBuf>) {
                 link = parent.join(format!("{base} ({n}).lnk"));
                 n += 1;
             }
-            if let Err(e) = rf_win::shortcut::create(&link, &target) {
-                log::warn!("shortcut: {e:#}");
+            match rf_win::shortcut::create(&link, &target) {
+                Ok(()) => made.push(link),
+                Err(e) => log::warn!("shortcut: {e:#}"),
             }
+        }
+        // (Ctrl+Z takes them away, and does not undo the operation before them: see `paste_shortcuts`)
+        if !made.is_empty() {
+            crate::undo::push(crate::undo::UndoOp::CreatedAll { paths: made });
         }
     });
 }

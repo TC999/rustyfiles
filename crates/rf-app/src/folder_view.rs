@@ -366,6 +366,131 @@ const NAME_COL: usize = 11;
 #[derive(Clone)]
 struct ColumnResize;
 struct ColumnGhost;
+/// A Details column header in the hand, to be put in another place (Explorer moves a column by dragging its header; asked on
+/// Discord: "Is it possible to reorder the columns?").
+#[derive(Clone, Copy)]
+struct ColumnMove(ColKey);
+
+/// The Details columns after Name that can be put in another order. (Name stays first: it stands still while the others scroll.)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ColKey {
+    Tags,
+    Git,
+    Sync,
+    GitMessage,
+    GitAuthor,
+    GitDate,
+    GitHash,
+    Modified,
+    Created,
+    Kind,
+    Size,
+}
+
+impl ColKey {
+    /// The order they always stood in.
+    pub(crate) const DEFAULT: [ColKey; 11] = [
+        ColKey::Tags,
+        ColKey::Git,
+        ColKey::Sync,
+        ColKey::GitMessage,
+        ColKey::GitAuthor,
+        ColKey::GitDate,
+        ColKey::GitHash,
+        ColKey::Modified,
+        ColKey::Created,
+        ColKey::Kind,
+        ColKey::Size,
+    ];
+
+    /// The name the order is saved under.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            ColKey::Tags => "tags",
+            ColKey::Git => "git",
+            ColKey::Sync => "sync",
+            ColKey::GitMessage => "git_message",
+            ColKey::GitAuthor => "git_author",
+            ColKey::GitDate => "git_date",
+            ColKey::GitHash => "git_hash",
+            ColKey::Modified => "modified",
+            ColKey::Created => "created",
+            ColKey::Kind => "type",
+            ColKey::Size => "size",
+        }
+    }
+
+    fn of_name(name: &str) -> Option<ColKey> {
+        ColKey::DEFAULT.into_iter().find(|k| k.name() == name)
+    }
+
+    /// The commit column `i` (message, author, date, hash).
+    fn commit(i: usize) -> ColKey {
+        [ColKey::GitMessage, ColKey::GitAuthor, ColKey::GitDate, ColKey::GitHash][i.min(3)]
+    }
+}
+
+/// The order the columns stand in: the saved names first (unknown ones and repeats skipped), then every column they do not name, in
+/// its default place. Pure.
+pub(crate) fn col_order(saved: &[String]) -> Vec<ColKey> {
+    let mut out: Vec<ColKey> = Vec::with_capacity(ColKey::DEFAULT.len());
+    for k in saved.iter().filter_map(|n| ColKey::of_name(n)) {
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    for k in ColKey::DEFAULT {
+        if !out.contains(&k) {
+            out.push(k);
+        }
+    }
+    out
+}
+
+/// The order after the column `from` was dropped on the column `to`: it takes `to`'s place, and `to` and those between move one
+/// place towards where `from` was (as Explorer moves a header). Pure.
+pub(crate) fn col_moved(order: &[ColKey], from: ColKey, to: ColKey) -> Vec<ColKey> {
+    let mut v = order.to_vec();
+    let (Some(a), Some(b)) = (v.iter().position(|k| *k == from), v.iter().position(|k| *k == to)) else { return v };
+    let k = v.remove(a);
+    v.insert(b, k);
+    v
+}
+
+/// Cells (or header cells) in the order of `order`; a column without a cell here (switched off, or not shown here) is skipped.
+fn in_col_order(order: &[ColKey], mut cells: Vec<(ColKey, AnyElement)>) -> Vec<AnyElement> {
+    let mut out = Vec::with_capacity(cells.len());
+    for k in order {
+        if let Some(i) = cells.iter().position(|(c, _)| c == k) {
+            out.push(cells.swap_remove(i).1);
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod col_order_tests {
+    use super::{ColKey, col_moved, col_order};
+
+    #[test]
+    fn the_saved_order_comes_first_and_the_rest_keep_their_places() {
+        assert_eq!(col_order(&[]), ColKey::DEFAULT.to_vec());
+        let saved: Vec<String> = ["size", "type", "nonsense", "size"].iter().map(|s| s.to_string()).collect();
+        let o = col_order(&saved);
+        assert_eq!(&o[..2], &[ColKey::Size, ColKey::Kind]);
+        assert_eq!(o.len(), ColKey::DEFAULT.len(), "every column once");
+        assert_eq!(o[2], ColKey::Tags, "then the default order");
+    }
+
+    #[test]
+    fn a_dropped_header_takes_the_place_of_the_one_it_was_dropped_on() {
+        let o = [ColKey::Modified, ColKey::Created, ColKey::Kind, ColKey::Size];
+        // Name, Size, Type, Date modified (the Discord wish)
+        assert_eq!(col_moved(&o, ColKey::Size, ColKey::Modified), vec![ColKey::Size, ColKey::Modified, ColKey::Created, ColKey::Kind]);
+        assert_eq!(col_moved(&o, ColKey::Modified, ColKey::Size), vec![ColKey::Created, ColKey::Kind, ColKey::Size, ColKey::Modified]);
+        assert_eq!(col_moved(&o, ColKey::Kind, ColKey::Kind), o.to_vec(), "on itself: nothing");
+    }
+}
 /// The Details list's sideways scrollbar thumb in the hand.
 struct SidewaysDrag;
 impl Render for ColumnGhost {
@@ -2065,6 +2190,7 @@ impl FolderView {
                 Msg::Done(r) => {
                     done = true;
                     self.loading = false;
+                    self.measure_all_for_size_sort(cx);
                     self.search_stage = None;
                     self.apply_adaptive();
                     self.load_ms = Some(self.load_started.elapsed().as_millis());
@@ -2798,6 +2924,7 @@ impl FolderView {
         }
         self.props_drop_sort();
         self.sort = spec;
+        self.measure_all_for_size_sort(cx);
         // (a sort by tag or path keeps the list as it is until its ranks are made: sorted by name now
         // and by the ranks a moment later would be two sorts and a flicker)
         self.sortx_ensure(cx);
@@ -2812,6 +2939,7 @@ impl FolderView {
         // from a sort by a property column, a fixed column starts as a new sort (not a flip of the one under it)
         self.sort = if self.props.sort_active() { self.props_fixed_sort(key) } else { self.sort.toggled(key) };
         self.props_drop_sort();
+        self.measure_all_for_size_sort(cx);
         self.sortx_ensure(cx);
         if !self.sortx_must_wait() {
             self.rebuild_visible();
@@ -2821,6 +2949,26 @@ impl FolderView {
     }
 
     // ---------- selection ----------
+
+    /// Tab / Shift+Tab while an item is being renamed (the window's pane-walking keys come here then): the name is applied and the
+    /// next (previous) item's name is edited, as in Explorer (issue 395). Not past the last or the first item, and not on while a
+    /// question or a notice about the name is showing. False when nothing is being renamed.
+    pub(crate) fn rename_step(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(ei) = self.renaming.as_ref().map(|(i, _)| *i) else { return false };
+        let Some(vi) = self.visible.iter().position(|&i| i == ei) else { return false };
+        let next = if forward { Some(vi + 1).filter(|&n| n < self.visible.len()) } else { vi.checked_sub(1) };
+        let next_ei = next.map(|n| self.visible[n]);
+        let quiet = self.commit_rename_quietly(window, cx);
+        let Some(next_ei) = next_ei.filter(|_| quiet) else { return true };
+        // (the item just renamed is not selected again when the watcher brings its new name: the box has moved on)
+        self.clear_reselect();
+        if let Some(nvi) = self.visible.iter().position(|&i| i == next_ei) {
+            self.select_only(nvi);
+            self.scroll.scroll_to_item(self.list_row(nvi), ScrollStrategy::Nearest);
+            self.begin_rename(window, cx);
+        }
+        true
+    }
 
     fn select_only(&mut self, vi: usize) {
         self.selected.clear();
@@ -3249,10 +3397,9 @@ impl FolderView {
             self.images.update(cx, |c, cx| {
                 if thumbs_on {
                     c.thumbnail_fit(&d, e, thumb_px, box_px, cx)
-                } else if crate::settings::icon_theme() == crate::settings::IconThemePref::Freedesktop {
-                    c.icon_sized(&d, e, thumb_px, cx)
                 } else {
-                    c.icon(&d, e, cx)
+                    // (the tile's own size: the 32 px list icon stretched over a tile was blurred, issue 253)
+                    c.icon_sized(&d, e, thumb_px, cx)
                 }
             })
         });
@@ -3437,6 +3584,7 @@ impl FolderView {
         let was_renaming = self.renaming.is_some();
         let had_focus = window.is_window_active() && self.focus.is_focused(window);
         let was_only = self.visible.get(vi).is_some_and(|ei| self.selected.len() == 1 && self.selected.contains(ei));
+        let was_selected = self.visible.get(vi).is_some_and(|ei| self.selected.contains(ei));
         self.slow_click = None;
         // a press on another item applies the name being typed, as Explorer does (issue 180: "With Windows Explorer you could just
         // click anywhere on the window for the changes to be applied"); it was thrown away
@@ -3500,7 +3648,7 @@ impl FolderView {
                 on_release = Release::SelectOnly;
             }
         }
-        let band = row_press_band(self.view_mode, on_name || on_icon || on_text, cx.global::<crate::settings::Settings>().row_selection_box, plain);
+        let band = row_press_band(self.view_mode, on_name || on_icon || on_text, was_selected, cx.global::<crate::settings::Settings>().row_selection_box, plain);
         self.drag_origin = Some(RowPress { origin: ev.position, open_on_release: plain && single && !second, on_release, band });
         // Explorer: a click on the name of the item that was already the only one selected
         // renames it, once the double-click time passes without a second click or a drag
@@ -4160,6 +4308,21 @@ impl FolderView {
         DirSize::Partial(0)
     }
 
+    /// Sorted by Size with folder sizes on: every folder of the listing is measured, not only those on the screen, so the biggest
+    /// one comes to the top without scrolling down to it first (issue 283: "Largest folder is somewhere on the list, but not on top").
+    fn measure_all_for_size_sort(&mut self, cx: &mut Context<Self>) {
+        if self.sort.key != SortKey::Size || !cx.global::<crate::settings::Settings>().calculate_folder_sizes {
+            return;
+        }
+        if self.location().path().is_some_and(crate::archive_view::is_browsable_path) {
+            return;
+        }
+        let dirs: Vec<PathBuf> = (0..self.entries.len()).filter(|&i| self.entries[i].is_dir()).filter_map(|i| self.path_of(i as u32)).collect();
+        for d in dirs {
+            self.folder_size(d, cx);
+        }
+    }
+
     fn known_folder_size(&self, path: &Path, on_disk: bool) -> Option<String> {
         self.folder_sizes.get(path).copied().and_then(|size| size.measured_text(on_disk))
     }
@@ -4391,6 +4554,12 @@ impl FolderView {
 
     fn on_row_right_down(&mut self, vi: usize, window: &mut Window, cx: &mut Context<Self>) {
         cx.stop_propagation();
+        // The row being renamed: a right click is the name box's own (its Cut, Copy, Paste menu). The row took it, gave the list
+        // the keyboard and so ended the rename (Discord: "right-click inside the text field to paste ... causes rf to exit the
+        // renaming mode").
+        if self.renaming.as_ref().is_some_and(|(ei, _)| self.visible.get(vi) == Some(ei)) {
+            return;
+        }
         window.focus(&self.focus, cx);
         if let Some(&ei) = self.visible.get(vi) {
             if !self.selected.contains(&ei) {
@@ -4454,7 +4623,10 @@ impl FolderView {
         }
         let Some(path) = self.path_of(ei) else { return };
         let e = &self.entries[ei as usize];
+        // (in an Open dialog an archive is a file to hand to the program, as in Explorer's: issue 283, a zip picked to upload
+        // somewhere opened as a folder instead)
         let browse = !e.is_dir()
+            && !self.picking
             && cx.global::<crate::settings::Settings>().browse_archives
             && crate::archive_view::is_browsable(&path);
         // an archive goes where the setting says (its own tab or window, or here as a folder)
@@ -4857,32 +5029,64 @@ impl FolderView {
             )
             // the columns after Name: clipped to what the pane shows and scrolled sideways as the rows are (issues 342, 372)
             .child(div().h_full().flex().flex_shrink(1.).min_w_0().overflow_hidden().child(h_flex().h_full().flex_shrink_0().relative().left(px(-self.h_off))
-            .children(show_tags.then(|| self.sortx_header("h-tags", t!("Dosya etiketi"), w[4], SortKey::Tag, p, cx).child(handle(4, cx))))
-            .children(show_git.then(|| plain("h-git", t!("Git durumu"), w[5]).child(handle(5, cx))))
-            .children(show_sync.then(|| self.sortx_header("h-sync", t!("Eşitleme durumu"), w[6], SortKey::Sync, p, cx).child(handle(6, cx))))
-            .children(vis.commit[0].then(|| plain("h-gmsg", t!("Son commit mesajı"), w[7]).child(handle(7, cx))))
-            .children(vis.commit[1].then(|| plain("h-gauth", t!("Commit yazarı"), w[8]).child(handle(8, cx))))
-            .children(vis.commit[2].then(|| plain("h-gdate", t!("Commit tarihi"), w[9]).child(handle(9, cx))))
-            .children(vis.commit[3].then(|| plain("h-ghash", t!("Commit hash"), w[10]).child(handle(10, cx))))
-            .children(vis.modified.then(|| {
-                col("h-mod", t!("Değiştirme tarihi"), SortKey::Modified, Some(px(w[0])), false, cx).relative().child(handle(0, cx))
-            }))
-            .children(vis.created.then(|| {
-                col("h-created", t!("Oluşturma tarihi"), SortKey::Created, Some(px(w[1])), false, cx).relative().child(handle(1, cx))
-            }))
-            .children(vis.kind.then(|| {
-                // (in results from several folders this column is the folder, and it sorts by it)
-                let c = col("h-type", if search { t!("Konum") } else { t!("Tür") }, if search { SortKey::Path } else { SortKey::Type }, Some(self.type_col_w(cx)), false, cx).relative();
-                if search { c } else { c.child(handle(2, cx)) }
-            }))
-            .children(vis.size.then(|| {
-                col("h-size", t!("Boyut"), SortKey::Size, Some(px(w[3])), !cx.global::<crate::settings::Settings>().windows_file_explorer_theme, cx)
-                    .relative()
-                    .child(handle(3, cx))
-            }))
+            .children({
+                // in the order the user dragged them to; a header is picked up and dropped on another one to take its place
+                let mut cells: Vec<(ColKey, Stateful<Div>)> = Vec::new();
+                if show_tags {
+                    cells.push((ColKey::Tags, self.sortx_header("h-tags", t!("Dosya etiketi"), w[4], SortKey::Tag, p, cx).child(handle(4, cx))));
+                }
+                if show_git {
+                    cells.push((ColKey::Git, plain("h-git", t!("Git durumu"), w[5]).child(handle(5, cx))));
+                }
+                if show_sync {
+                    cells.push((ColKey::Sync, self.sortx_header("h-sync", t!("Eşitleme durumu"), w[6], SortKey::Sync, p, cx).child(handle(6, cx))));
+                }
+                for (i, (id, label)) in [("h-gmsg", t!("Son commit mesajı")), ("h-gauth", t!("Commit yazarı")), ("h-gdate", t!("Commit tarihi")), ("h-ghash", t!("Commit hash"))].into_iter().enumerate() {
+                    if vis.commit[i] {
+                        cells.push((ColKey::commit(i), plain(id, label, w[7 + i]).child(handle(7 + i, cx))));
+                    }
+                }
+                if vis.modified {
+                    cells.push((ColKey::Modified, col("h-mod", t!("Değiştirme tarihi"), SortKey::Modified, Some(px(w[0])), false, cx).relative().child(handle(0, cx))));
+                }
+                if vis.created {
+                    cells.push((ColKey::Created, col("h-created", t!("Oluşturma tarihi"), SortKey::Created, Some(px(w[1])), false, cx).relative().child(handle(1, cx))));
+                }
+                if vis.kind {
+                    // (in results from several folders this column is the folder, and it sorts by it)
+                    let c = col("h-type", if search { t!("Konum") } else { t!("Tür") }, if search { SortKey::Path } else { SortKey::Type }, Some(self.type_col_w(cx)), false, cx).relative();
+                    cells.push((ColKey::Kind, if search { c } else { c.child(handle(2, cx)) }));
+                }
+                if vis.size {
+                    let right = !cx.global::<crate::settings::Settings>().windows_file_explorer_theme;
+                    cells.push((ColKey::Size, col("h-size", t!("Boyut"), SortKey::Size, Some(px(w[3])), right, cx).relative().child(handle(3, cx))));
+                }
+                let accent = p.accent;
+                let cells: Vec<(ColKey, AnyElement)> = cells
+                    .into_iter()
+                    .map(|(key, cell)| {
+                        let cell = cell
+                            .on_drag(ColumnMove(key), |_, _, _, cx| cx.new(|_| ColumnGhost))
+                            .drag_over::<ColumnMove>(move |s, _, _, _| s.border_l_2().border_color(accent))
+                            .on_drop(cx.listener(move |this, m: &ColumnMove, _, cx| this.move_column(m.0, key, cx)));
+                        (key, cell.into_any_element())
+                    })
+                    .collect();
+                in_col_order(&col_order(&cx.global::<crate::settings::Settings>().columns.order), cells)
+            })
             .children(self.props_header_cells(p, cx))))
             // (the room left over, once the Name column has a width of its own)
             .when(self.name_fixed(cx).is_some(), |d| d.child(div().flex_1()))
+    }
+
+    /// A header dropped on another: the dragged column takes that one's place, and the order is kept in Settings.
+    fn move_column(&mut self, from: ColKey, to: ColKey, cx: &mut Context<Self>) {
+        if from == to {
+            return;
+        }
+        let order = col_moved(&col_order(&cx.global::<crate::settings::Settings>().columns.order), from, to);
+        crate::settings::update(cx, |s| s.columns.order = order.iter().map(|k| k.name().to_string()).collect());
+        cx.notify();
     }
 
     fn store_col_width(c: &mut crate::settings::ColumnPrefs, ix: usize, width: u16) {
@@ -5100,7 +5304,7 @@ impl FolderView {
                 .flatten()
                 .filter(|_| self.parent_of(ei) == self.location().path())
                 .and_then(|m| m.get(&*e.name));
-            let commit_cells: Vec<AnyElement> = (0..4)
+            let commit_cells: Vec<(ColKey, AnyElement)> = (0..4)
                 .filter(|&i| vis.commit[i])
                 .map(|i| {
                     let text: String = match (i, commit) {
@@ -5110,7 +5314,7 @@ impl FolderView {
                         (2, Some(c)) => format::datetime(c.time_ms),
                         (_, Some(c)) => c.sha.clone(),
                     };
-                    div()
+                    let cell = div()
                         .w(px(cw[7 + i]))
                         .flex_shrink_0()
                         .px_2()
@@ -5120,7 +5324,8 @@ impl FolderView {
                         .overflow_hidden()
                         .text_ellipsis()
                         .child(Self::held_text(text, cx))
-                        .into_any_element()
+                        .into_any_element();
+                    (ColKey::commit(i), cell)
                 })
                 .collect();
             let tag_cell = col_tags.then(|| {
@@ -5317,11 +5522,14 @@ impl FolderView {
                 )
                 // the columns after Name: clipped to what the pane shows and scrolled sideways together (issues 342, 372)
                 .child(div().h_full().flex().items_center().flex_shrink(1.).min_w_0().overflow_hidden().child(h_flex().h_full().items_center().flex_shrink_0().relative().left(px(-h_off))
-                .children(tag_cell)
-                .children(git_cell)
-                .children(sync_cell)
-                .children(commit_cells)
-                .children(show_date.then(|| {
+                .children({
+                    // in the order of the headers (dragged by the user)
+                    let mut cells: Vec<(ColKey, AnyElement)> = Vec::new();
+                    cells.extend(tag_cell.map(|c| (ColKey::Tags, c.into_any_element())));
+                    cells.extend(git_cell.map(|c| (ColKey::Git, c.into_any_element())));
+                    cells.extend(sync_cell.map(|c| (ColKey::Sync, c.into_any_element())));
+                    cells.extend(commit_cells);
+                    cells.extend(show_date.then(|| (ColKey::Modified, {
                     div()
                         .w(px(cw[0]))
                         .flex_shrink_0()
@@ -5332,8 +5540,9 @@ impl FolderView {
                         .overflow_hidden()
                         .text_ellipsis()
                         .child(Self::held_text(format::datetime(e.modified_ms), cx))
-                }))
-                .children(show_created.then(|| {
+                        .into_any_element()
+                    })));
+                    cells.extend(show_created.then(|| (ColKey::Created, {
                     div()
                         .w(px(cw[1]))
                         .flex_shrink_0()
@@ -5344,8 +5553,9 @@ impl FolderView {
                         .overflow_hidden()
                         .text_ellipsis()
                         .child(Self::held_text(format::datetime(e.created_ms), cx))
-                }))
-                .when(show_type, |row| row.child(
+                        .into_any_element()
+                    })));
+                    cells.extend(show_type.then(|| (ColKey::Kind,
                     div()
                         .w(type_w)
                         .flex_shrink_0()
@@ -5358,9 +5568,10 @@ impl FolderView {
                         .child(Self::held_text(
                             if search_mode { self.parent_of(ei).map(|d| d.to_string_lossy().into_owned()).unwrap_or_default() } else { icons::type_label(e) },
                             cx,
-                        )),
-                ))
-                .when(show_size, |row| {
+                        ))
+                        .into_any_element(),
+                    )));
+                    if show_size {
                     let cell = div().w(px(cw[3])).flex_shrink_0().px_2().flex().justify_end().whitespace_nowrap().overflow_hidden();
                     let cell = match calc_link {
                         // "Boyutu hesapla": measures just this folder (doesn't select the row)
@@ -5388,7 +5599,9 @@ impl FolderView {
                             cell.text_color(p.text_secondary).text_ellipsis().child(Self::held_text(text, cx))
                         }
                     };
-                    row.child(cell)
+                    cells.push((ColKey::Size, cell.into_any_element()));
+                    }
+                    in_col_order(&col_order(&cx.global::<crate::settings::Settings>().columns.order), cells)
                 })
                 .children(prop_cells)))
                 // (not while a menu is open: the details stood behind the right-click menu, a Discord report)
@@ -5788,7 +6001,7 @@ impl FolderView {
             let path = f.path.clone();
             let shell_icon = if windows_file_explorer_theme {
                 self.images.update(cx, |images, cx| {
-                    images.shell_icon(&path.to_string_lossy(), 28, cx)
+                    images.shell_icon_ui(&path.to_string_lossy(), 28, cx)
                 })
             } else {
                 None
@@ -5810,7 +6023,7 @@ impl FolderView {
             let usage_root = d.root.clone();
             let shell_icon = if windows_file_explorer_theme {
                 self.images.update(cx, |images, cx| {
-                    images.shell_icon(&root.to_string_lossy(), 28, cx)
+                    images.shell_icon_ui(&root.to_string_lossy(), 28, cx)
                 })
             } else {
                 None
@@ -7038,8 +7251,13 @@ fn hover_time() -> std::time::Duration {
 /// the name and the icon did, so a file taken by its date or size "cannot be dragged out, it only gets highlighted", and a short
 /// name left almost nothing to take it by. `boxes_from_rows` is the setting that turns the whole rule off: every press on a row
 /// then drags, as before 0.9.9, and a box starts from the empty area below the rows.
-fn row_press_band(mode: ViewMode, on_item: bool, boxes_from_rows: bool, plain: bool) -> Option<bool> {
-    (boxes_from_rows && matches!(mode, ViewMode::Details | ViewMode::Columns) && !on_item).then_some(!plain)
+/// Whether a press on a row starts a selection box (`Some(adds)`) rather than taking the item (`None`). A row that was already
+/// selected is taken from anywhere, as in Explorer: the selection is what one came to drag, and a press on its row's empty space
+/// that drew a box instead felt random (issue 393); with Ctrl it is a copy, as Explorer's. Elsewhere a row's empty space starts a
+/// box, unless the setting says rows never do; with Ctrl or Shift the box adds to the selection.
+fn row_press_band(mode: ViewMode, on_item: bool, was_selected: bool, boxes_from_rows: bool, plain: bool) -> Option<bool> {
+    let takes_item = on_item || was_selected;
+    (boxes_from_rows && matches!(mode, ViewMode::Details | ViewMode::Columns) && !takes_item).then_some(!plain)
 }
 
 #[cfg(test)]
@@ -7049,14 +7267,17 @@ mod row_press_tests {
     #[test]
     fn a_row_is_dragged_by_its_item_and_starts_a_box_from_its_empty_space() {
         for mode in [ViewMode::Details, ViewMode::Columns] {
-            assert_eq!(row_press_band(mode, true, true, true), None, "a press on the name, the icon or a cell's text drags the item");
-            assert_eq!(row_press_band(mode, false, true, true), Some(false), "a press on the row's empty space starts a box");
-            assert_eq!(row_press_band(mode, false, true, false), Some(true), "with Ctrl or Shift the box adds to the selection");
-            assert_eq!(row_press_band(mode, false, false, true), None, "with the setting off the whole row drags");
-            assert_eq!(row_press_band(mode, false, false, false), None);
+            assert_eq!(row_press_band(mode, true, false, true, true), None, "a press on the name, the icon or a cell's text drags the item");
+            assert_eq!(row_press_band(mode, false, false, true, true), Some(false), "a press on an unselected row's empty space starts a box");
+            assert_eq!(row_press_band(mode, false, false, true, false), Some(true), "with Ctrl or Shift the box adds to the selection");
+            assert_eq!(row_press_band(mode, false, false, false, true), None, "with the setting off the whole row drags");
+            assert_eq!(row_press_band(mode, false, false, false, false), None);
+            // issue 393: a selected row is dragged from anywhere on it, as in Explorer
+            assert_eq!(row_press_band(mode, false, true, true, true), None, "a selected row's empty space drags the selection");
+            assert_eq!(row_press_band(mode, false, true, true, false), None, "with Ctrl too: a Ctrl drag of the selection copies it");
         }
         // (a tile has empty space around it: a press on the tile always takes the item)
-        assert_eq!(row_press_band(ViewMode::Grid, false, true, true), None);
+        assert_eq!(row_press_band(ViewMode::Grid, false, false, true, true), None);
     }
 }
 

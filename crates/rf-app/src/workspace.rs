@@ -702,7 +702,13 @@ pub fn route_ipc_shown(msg: String, cx: &mut App) -> bool {
         let ok = handle
             .update(cx, |_, window, cx| {
                 ws.update(cx, |w, cx| w.open_tab_selecting(target, sel, window, cx));
-                window.activate_window();
+                // In front, as Explorer's window comes: the request comes from another program (Win+E caught by the dock, the
+                // desktop, a download manager), so this program is not the one in front and a plain request to come forward was
+                // refused (issue 379). The switcher's way to the front tries harder and flashes the button at worst.
+                let hwnd = crate::look::window::hwnd_of(window);
+                if hwnd == 0 || rf_win::switcher::activate::activate(&mut rf_win::switcher::activate::Win32Ops, hwnd) == rf_win::switcher::activate::Outcome::Gone {
+                    window.activate_window();
+                }
             })
             .is_ok();
         if ok {
@@ -712,7 +718,8 @@ pub fn route_ipc_shown(msg: String, cx: &mut App) -> bool {
     }
     *START_SELECT.lock().unwrap() = select;
     let start = launch_window_start(&msg, has_browser_window(cx), loc);
-    let made = crate::open_main_window_made(start, None, None, cx);
+    // (a new window comes to the front the same way: issue 379)
+    let made = crate::open_main_window_in_front(start, cx).is_some();
     crate::shell::desktop::open::mark("main: a new window was made for the place");
     made
 }
@@ -1219,6 +1226,8 @@ impl Workspace {
     /// screen) and the file list, as Explorer's Tab does (issue 38: "TAB does not work anywhere"). A rename in the list keeps it.
     fn cycle_focus(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab().read(cx).renaming.is_some() {
+            // (in the rename box Tab goes on to the next item's name, issue 395)
+            self.active_tab().update(cx, |v, cx| v.rename_step(forward, window, cx));
             return;
         }
         let tree = self.tree_focus(cx);
@@ -1963,6 +1972,15 @@ impl Workspace {
     fn navigate(&mut self, loc: Location, window: &mut Window, cx: &mut Context<Self>) {
         if matches!(loc, Location::Settings) && let Some(ix) = self.settings_tab_elsewhere(cx) {
             self.activate(ix, window, cx);
+            return;
+        }
+        // Settings and the Recycle Bin in a tab of their own when the setting says so, unless the tab in front shows nothing to keep:
+        // Home, or one of the two pages (issue 386: "prevent the user from losing their current position")
+        if matches!(loc, Location::Settings | Location::RecycleBin)
+            && cx.global::<crate::settings::Settings>().pages_in_new_tab
+            && !matches!(self.active_tab().read(cx).location(), Location::Home | Location::Settings | Location::RecycleBin)
+        {
+            self.open_tab(loc, window, cx);
             return;
         }
         // Settings always gets a single pane: asked for from a split tab, it opens in a tab of its own (issue 281).
@@ -3374,6 +3392,12 @@ impl Workspace {
             .child(self.nav_button("refresh", L::RotateCw, true, p, cx, |this, _, cx| this.with_tab(cx, |v, cx| v.refresh(cx))))
             .child(omnibar)
             .child(crate::status_center::render_button(&self.ops, p, cx))
+            // Settings as a button of its own (in place of the sidebar's row, when asked for): beside the Status Center, in the row
+            // that every page has. On the command bar it was gone wherever the bar is not drawn (Home, the Recycle Bin, Settings
+            // itself) and with the bar switched off, and the sidebar's row was gone too (issue 399).
+            .when(cx.global::<crate::settings::Settings>().toolbar_extra.iter().any(|k| k == "settings"), |d| {
+                d.child(self.nav_button("settings", L::Settings, true, p, cx, |this, w, cx| this.navigate(Location::Settings, w, cx)))
+            })
     }
 
     fn enter_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3420,28 +3444,37 @@ impl Workspace {
         let view_label = (windows_theme && self.viewport_w >= 1200.).then(|| crate::i18n::tx("Görünüm", "View"));
         let filter_on = self.filter_bar;
         let paste_ok = (in_folder || in_shell) && rf_win::clipboard::can_paste();
+        // (Settings > Appearance > Toolbar buttons: the pictures' size, issue 248)
+        let icon_px = px(crate::toolbar_layout::icon_px(cx.global::<crate::settings::Settings>().toolbar_icon_size));
+        // (Windows' own pictures in the Explorer look, and in the other one when asked for: issue 382)
+        let windows_icons = windows_theme || cx.global::<crate::settings::Settings>().toolbar_windows_icons;
         let toolbar_icon = |icon: L| {
             #[cfg(target_os = "windows")]
-            if windows_theme {
+            if windows_icons {
                 if let Some(glyph) = crate::icons::windows_theme_icon_glyph(icon) {
-                    return crate::icons::windows_theme_glyph(glyph, px(16.));
+                    return crate::icons::windows_theme_glyph(glyph, icon_px);
                 }
             }
-            Icon::new(icon).size(px(16.)).into_any_element()
+            Icon::new(icon).size(icon_px).into_any_element()
         };
+        // how each button is shown (picture, word or both: issue 374)
+        let looks = cx.global::<crate::settings::Settings>().toolbar_look.clone();
+        let look = |name: &str| crate::toolbar_layout::look_of(&looks, name);
         let preview_icon = toolbar_icon(L::PanelRight);
         // only while the folder is shown in groups (issue 181)
         let (has_groups, all_folded) = (tab.has_groups(), tab.all_groups_folded());
 
-        let cmd = |id: &'static str, icon: L, tip: &'static str, enabled: bool, cx: &mut Context<Self>, run: fn(&mut Self, &mut Window, &mut Context<Self>)| {
+        let cmd = |id: &'static str, icon: L, tip: &'static str, enabled: bool, look: crate::toolbar_layout::Look, cx: &mut Context<Self>, run: fn(&mut Self, &mut Window, &mut Context<Self>)| {
+            // (the word is the tooltip's, without its key: "Kes  (Ctrl+X)" is "Kes")
+            let word = look.word_shown(false).then(|| crate::i18n::t(tip).split("  ").next().unwrap_or_default().to_string());
             div()
                 .id(id)
                 .h(px(32.))
-                .w(command_width)
+                .when(word.is_none(), |d| d.w(command_width).justify_center())
+                .when(word.is_some(), |d| d.px_2().gap_1p5().text_sm())
                 .flex_shrink_0()
                 .flex()
                 .items_center()
-                .justify_center()
                 .rounded(theme::RADIUS_SM)
                 .text_color(if enabled { p.text } else { p.text_tertiary })
                 .tooltip(move |w, cx| gpui_kit::component::tooltip::Tooltip::new(crate::i18n::t(tip)).build(w, cx))
@@ -3450,11 +3483,15 @@ impl Workspace {
                         .active(|s| s.bg(p.pressed))
                         .on_click(cx.listener(move |this, _, window, cx| run(this, window, cx)))
                 })
-                .child(toolbar_icon(icon))
+                .when(look.icon(), |d| d.child(toolbar_icon(icon)))
+                .children(word.map(|w| div().whitespace_nowrap().child(w)))
         };
         let hidden_shown = self.active_tab().read(cx).filter.show_hidden;
+        let (ext_shown, dual_on, shelf_on) = (cx.global::<crate::settings::Settings>().show_extensions, self.tabs[self.active].right.is_some(), self.shelf_open);
         let popups_open = self.popups_open(cx);
-        let drop = |id: &'static str, icon: L, label: Option<&'static str>, tip: &'static str, enabled: bool, cx: &mut Context<Self>, which: fn(&Self, &App) -> crate::ctx_menu::BarMenu| {
+        let drop = |id: &'static str, icon: L, label: Option<&'static str>, tip: &'static str, enabled: bool, look: crate::toolbar_layout::Look, cx: &mut Context<Self>, which: fn(&Self, &App) -> crate::ctx_menu::BarMenu| {
+            // (a word of its own, or the tooltip's: "Sırala ve gruplandır")
+            let label: Option<SharedString> = look.word_shown(label.is_some()).then(|| label.map(SharedString::from).unwrap_or_else(|| crate::i18n::t(tip).into()));
             h_flex()
                 .id(id)
                 .h(px(32.))
@@ -3466,10 +3503,10 @@ impl Workspace {
                 .text_sm()
                 .text_color(if enabled { p.text } else { p.text_tertiary })
                 .when(!popups_open, |d| d.tooltip(move |w, cx| gpui_kit::component::tooltip::Tooltip::new(crate::i18n::t(tip)).build(w, cx)))
-                .child(toolbar_icon(icon))
-                .children(label.map(|l| div().child(l)))
-                // (Explorer's "See more" has no arrow, issue 229)
-                .when(!(windows_theme && id == "cb-more"), |d| d.child(div().text_color(p.text_secondary).child(toolbar_icon(L::ChevronDown))))
+                .when(look.icon(), |d| d.child(toolbar_icon(icon)))
+                .children(label.map(|l| div().whitespace_nowrap().child(l)))
+                // (Explorer's "See more" has no arrow, issue 229; nor with Windows' pictures in the other look, issue 403)
+                .when(!(windows_icons && id == "cb-more"), |d| d.child(div().text_color(p.text_secondary).child(toolbar_icon(L::ChevronDown))))
                 .when(enabled, |d| {
                     d.hover(|s| s.bg(p.hover)).active(|s| s.bg(p.pressed)).on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                         let menu = which(this, cx);
@@ -3507,6 +3544,120 @@ impl Workspace {
                 inline_commands.push((i, command, picture));
             }
         }
+        // The left group, in the saved order ("sep" a line; `toolbar_layout`). Each button as it always was, with the look the user
+        // chose for it; a button that is off gives nothing, and the lines next to it are tidied away.
+        let order = crate::toolbar_layout::order(&cx.global::<crate::settings::Settings>().toolbar_order, windows_theme);
+        let mut slots: Vec<Option<AnyElement>> = Vec::with_capacity(order.len());
+        for name in &order {
+            let el: Option<AnyElement> = match name.as_str() {
+                crate::toolbar_layout::SEP => {
+                    slots.push(None);
+                    continue;
+                }
+                "new" => on("new").then(|| {
+                    let label = if windows_theme { crate::i18n::tx("Yeni", "New") } else { crate::i18n::t("Yeni") };
+                    drop("cb-new", L::CirclePlus, Some(label), "Yeni öğe", in_folder, look("new"), cx, |_, _| crate::ctx_menu::BarMenu::New).into_any_element()
+                }),
+                "newfolder" => extra("newfolder").then(|| {
+                    cmd("cb-newfolder", L::FolderPlus, "Yeni klasör  (Ctrl+Shift+N)", in_folder, look("newfolder"), cx, |_, w, cx| w.dispatch_action(Box::new(NewFolder), cx)).into_any_element()
+                }),
+                "cut" => on("cut").then(|| {
+                    cmd("cb-cut", L::Scissors, "Kes  (Ctrl+X)", writable_sel, look("cut"), cx, |this, w, cx| {
+                        this.with_tab(cx, |v, cx| v.copy_to_clipboard(rf_win::fileops::Transfer::Move, w, cx))
+                    })
+                    .into_any_element()
+                }),
+                "copy" => on("copy").then(|| {
+                    cmd("cb-copy", L::Copy, "Kopyala  (Ctrl+C)", has_sel, look("copy"), cx, |this, w, cx| {
+                        this.with_tab(cx, |v, cx| v.copy_to_clipboard(rf_win::fileops::Transfer::Copy, w, cx))
+                    })
+                    .into_any_element()
+                }),
+                "paste" => on("paste").then(|| cmd("cb-paste", L::ClipboardPaste, "Yapıştır  (Ctrl+V)", paste_ok, look("paste"), cx, |this, w, cx| this.with_tab(cx, |v, cx| v.paste(w, cx))).into_any_element()),
+                "rename" => on("rename").then(|| {
+                    cmd("cb-rename", L::TextCursorInput, "Yeniden adlandır  (F2)", renamable_sel, look("rename"), cx, |this, w, cx| this.with_tab(cx, |v, cx| v.rename_selection(w, cx))).into_any_element()
+                }),
+                "share" => on("share").then(|| cmd("cb-share", L::Share2, "Paylaş", writable_sel, look("share"), cx, |this, w, cx| this.with_tab(cx, |v, cx| v.share(w, cx))).into_any_element()),
+                "delete" => on("delete").then(|| {
+                    cmd("cb-delete", L::Trash, "Sil  (Del)", writable_sel, look("delete"), cx, |this, w, cx| this.with_tab(cx, |v, cx| v.delete_selected(false, w, cx))).into_any_element()
+                }),
+                "props" => on("props").then(|| {
+                    cmd("cb-props", L::Wrench, "Özellikler  (Alt+Enter)", in_folder, look("props"), cx, |this, _, cx| {
+                        this.with_tab(cx, |v, cx| if v.selection_paths().is_empty() { v.folder_properties(cx) } else { v.properties(cx) })
+                    })
+                    .into_any_element()
+                }),
+                "edit" => extra("edit").then(|| {
+                    cmd("cb-edit", L::FilePen, "Metin düzenleyicide düzenle  (F4)", has_sel, look("edit"), cx, |_, w, cx| w.dispatch_action(Box::new(EditFiles), cx)).into_any_element()
+                }),
+                "terminal" => extra("terminal").then(|| {
+                    cmd("cb-terminal", L::SquareTerminal, "Terminalde aç  (Ctrl+Shift+`)", in_folder, look("terminal"), cx, |_, w, cx| w.dispatch_action(Box::new(OpenTerminal), cx)).into_any_element()
+                }),
+                // the button shows whether hidden items are shown: an open eye on the selected fill while they are, a struck-out one
+                // while they are not (issue 277: it looked switched on either way)
+                "hidden" => extra("hidden").then(|| {
+                    cmd("cb-hidden", if hidden_shown { L::Eye } else { L::EyeOff }, "Gizli öğeleri göster/gizle  (Ctrl+H)", in_folder, look("hidden"), cx, |_, w, cx| {
+                        w.dispatch_action(Box::new(ToggleHidden), cx)
+                    })
+                    .when(hidden_shown && in_folder, |d| d.bg(p.selection))
+                    .into_any_element()
+                }),
+                // the View menu's switches as buttons of their own, on the selected fill while on (off unless asked for: issue 405)
+                "extensions" => extra("extensions").then(|| {
+                    cmd("cb-extensions", L::FileType, "Dosya uzantıları", true, look("extensions"), cx, |_, w, cx| {
+                        let v = !cx.global::<crate::settings::Settings>().show_extensions;
+                        crate::settings::update(cx, |s| s.show_extensions = v);
+                        w.refresh();
+                    })
+                    .when(ext_shown, |d| d.bg(p.selection))
+                    .into_any_element()
+                }),
+                "dual" => extra("dual").then(|| {
+                    cmd("cb-dual", L::Columns2, "Çift panel  (Ctrl+Shift+D)", true, look("dual"), cx, |_, w, cx| w.dispatch_action(Box::new(ToggleDualPane), cx))
+                        .when(dual_on, |d| d.bg(p.selection))
+                        .into_any_element()
+                }),
+                "shelf" => extra("shelf").then(|| {
+                    cmd("cb-shelf", L::Inbox, "Raf", true, look("shelf"), cx, |_, w, cx| w.dispatch_action(Box::new(ToggleShelf), cx))
+                        .when(shelf_on, |d| d.bg(p.selection))
+                        .into_any_element()
+                }),
+                "refresh" => extra("refresh").then(|| cmd("cb-refresh", L::RotateCw, "Yenile  (F5)", true, look("refresh"), cx, |_, w, cx| w.dispatch_action(Box::new(Refresh), cx)).into_any_element()),
+                // (off unless asked for; issue 258: "keep the Repeat/Undo button visible in the navigation bar")
+                "undo" => extra("undo").then(|| cmd("cb-undo", L::Undo2, "Geri al  (Ctrl+Z)", true, look("undo"), cx, |_, w, cx| w.dispatch_action(Box::new(Undo), cx)).into_any_element()),
+                "redo" => extra("redo").then(|| cmd("cb-redo", L::Redo2, "Yinele  (Ctrl+Y)", true, look("redo"), cx, |_, w, cx| w.dispatch_action(Box::new(Redo), cx)).into_any_element()),
+                // (off unless asked for; issue 406: the "..." menu's selection commands on the bar)
+                "selectall" => extra("selectall").then(|| {
+                    cmd("cb-selectall", L::SquareCheck, "Tümünü seç", in_folder, look("selectall"), cx, |this, _, cx| {
+                        this.active_tab().clone().update(cx, |v, cx| v.select_all_items(cx))
+                    })
+                    .into_any_element()
+                }),
+                "selectnone" => extra("selectnone").then(|| {
+                    cmd("cb-selectnone", L::Square, "Hiçbirini seçme", in_folder && has_sel, look("selectnone"), cx, |this, _, cx| {
+                        this.active_tab().clone().update(cx, |v, cx| v.select_no_items(cx))
+                    })
+                    .into_any_element()
+                }),
+                "invertsel" => extra("invertsel").then(|| {
+                    cmd("cb-invertsel", L::ArrowLeftRight, "Seçimi tersine çevir", in_folder, look("invertsel"), cx, |this, _, cx| {
+                        this.active_tab().clone().update(cx, |v, cx| v.invert_selected_items(cx))
+                    })
+                    .into_any_element()
+                }),
+                "more" => on("more").then(|| drop("cb-more", L::Ellipsis, None, "Diğer", in_folder, look("more"), cx, |_, _| crate::ctx_menu::BarMenu::More).into_any_element()),
+                // (in the Explorer look only: in the other one they stand in the right group)
+                "sort" => on("sort").then(|| drop("cb-sort", L::ArrowUpDown, sort_label, "Sırala ve gruplandır", in_folder, look("sort"), cx, |_, _| crate::ctx_menu::BarMenu::Sort).into_any_element()),
+                "view" => on("view").then(|| {
+                    drop("cb-view", L::LayoutGrid, view_label, "Görünüm", true, look("view"), cx, move |this, _| crate::ctx_menu::BarMenu::View { dual: this.tabs[this.active].right.is_some(), shelf: this.shelf_open }).into_any_element()
+                }),
+                _ => None,
+            };
+            if let Some(el) = el {
+                slots.push(Some(el));
+            }
+        }
+        let left_group: Vec<AnyElement> = crate::toolbar_layout::tidy(slots).into_iter().map(|el| el.unwrap_or_else(|| sep().into_any_element())).collect();
         let menu_name = crate::i18n::tx("Özel komutlar", "Custom commands");
         let bar_border = if !windows_theme || p.dark || self.glass_shown { p.divider } else { gpui_kit::rgb(0xDDE2E6).into() };
 
@@ -3520,50 +3671,8 @@ impl Workspace {
             .when(windows_theme, |d| d.border_t_1())
             .border_b_1()
             .border_color(bar_border)
-            .children(on("new").then(|| drop("cb-new", L::CirclePlus, Some(if windows_theme { crate::i18n::tx("Yeni", "New") } else { crate::i18n::t("Yeni") }), "Yeni öğe", in_folder, cx, |_, _| crate::ctx_menu::BarMenu::New)))
-            .children(extra("newfolder").then(|| {
-                cmd("cb-newfolder", L::FolderPlus, "Yeni klasör  (Ctrl+Shift+N)", in_folder, cx, |_, w, cx| w.dispatch_action(Box::new(NewFolder), cx))
-            }))
-            .children(on("new").then(sep))
-            .children(on("cut").then(|| {
-                cmd("cb-cut", L::Scissors, "Kes  (Ctrl+X)", writable_sel, cx, |this, w, cx| {
-                    this.with_tab(cx, |v, cx| v.copy_to_clipboard(rf_win::fileops::Transfer::Move, w, cx))
-                })
-            }))
-            .children(on("copy").then(|| {
-                cmd("cb-copy", L::Copy, "Kopyala  (Ctrl+C)", has_sel, cx, |this, w, cx| {
-                    this.with_tab(cx, |v, cx| v.copy_to_clipboard(rf_win::fileops::Transfer::Copy, w, cx))
-                })
-            }))
-            .children(on("paste").then(|| cmd("cb-paste", L::ClipboardPaste, "Yapıştır  (Ctrl+V)", paste_ok, cx, |this, w, cx| this.with_tab(cx, |v, cx| v.paste(w, cx)))))
-            .children(on("rename").then(|| {
-                cmd("cb-rename", L::TextCursorInput, "Yeniden adlandır  (F2)", renamable_sel, cx, |this, w, cx| this.with_tab(cx, |v, cx| v.rename_selection(w, cx)))
-            }))
-            .children(on("share").then(|| cmd("cb-share", L::Share2, "Paylaş", writable_sel, cx, |this, w, cx| this.with_tab(cx, |v, cx| v.share(w, cx)))))
-            .children(on("delete").then(|| {
-                cmd("cb-delete", L::Trash, "Sil  (Del)", writable_sel, cx, |this, w, cx| this.with_tab(cx, |v, cx| v.delete_selected(false, w, cx)))
-            }))
-            .when(!windows_theme, |d| d.children(on("props").then(|| {
-                cmd("cb-props", L::Wrench, "Özellikler  (Alt+Enter)", in_folder, cx, |this, _, cx| {
-                    this.with_tab(cx, |v, cx| if v.selection_paths().is_empty() { v.folder_properties(cx) } else { v.properties(cx) })
-                })
-            })))
-            .children(extra("edit").then(|| {
-                cmd("cb-edit", L::FilePen, "Metin düzenleyicide düzenle  (F4)", has_sel, cx, |_, w, cx| w.dispatch_action(Box::new(EditFiles), cx))
-            }))
-            .children(extra("terminal").then(|| cmd("cb-terminal", L::SquareTerminal, "Terminalde aç  (Ctrl+Shift+`)", in_folder, cx, |_, w, cx| w.dispatch_action(Box::new(OpenTerminal), cx))))
-            // the button shows whether hidden items are shown: an open eye on the selected fill while they are, a struck-out one
-            // while they are not (issue 277: it looked switched on either way)
-            .children(extra("hidden").then(|| {
-                cmd("cb-hidden", if hidden_shown { L::Eye } else { L::EyeOff }, "Gizli öğeleri göster/gizle  (Ctrl+H)", in_folder, cx, |_, w, cx| {
-                    w.dispatch_action(Box::new(ToggleHidden), cx)
-                })
-                .when(hidden_shown && in_folder, |d| d.bg(p.selection))
-            }))
-            .children(extra("refresh").then(|| cmd("cb-refresh", L::RotateCw, "Yenile  (F5)", true, cx, |_, w, cx| w.dispatch_action(Box::new(Refresh), cx))))
-            .when(!windows_theme, |d| d.children(on("more").then(|| {
-                drop("cb-more", L::Ellipsis, None, "Diğer", in_folder, cx, |_, _| crate::ctx_menu::BarMenu::More)
-            })))
+            // the left group, in the order the user put it (Settings > Appearance > Toolbar buttons; issues 373, 248), with their lines
+            .children(left_group)
             .children((!inline_commands.is_empty() || !menu_commands.is_empty()).then(sep))
             .when(!inline_commands.is_empty(), |d| {
                 d.child(
@@ -3622,19 +3731,6 @@ impl Workspace {
                         }),
                 )
             })
-            .when(windows_theme, |d| {
-                d.children(on("sort").then(sep))
-                    .children(on("sort").then(|| drop("cb-sort", L::ArrowUpDown, sort_label, "Sırala ve gruplandır", in_folder, cx, |_, _| crate::ctx_menu::BarMenu::Sort)))
-                    .children(on("view").then(|| {
-                        drop("cb-view", L::LayoutGrid, view_label, "Görünüm", true, cx, move |this, _| crate::ctx_menu::BarMenu::View { dual: this.tabs[this.active].right.is_some(), shelf: this.shelf_open })
-                    }))
-                    .children(on("more").then(|| drop("cb-more", L::Ellipsis, None, "Diğer", in_folder, cx, |_, _| crate::ctx_menu::BarMenu::More)))
-                    .children(on("props").then(|| {
-                        cmd("cb-props", L::Wrench, "Özellikler  (Alt+Enter)", in_folder, cx, |this, _, cx| {
-                            this.with_tab(cx, |v, cx| if v.selection_paths().is_empty() { v.folder_properties(cx) } else { v.properties(cx) })
-                        })
-                    }))
-            })
             .child(div().flex_1())
             .when(has_groups, |d| {
                 let tip = if all_folded { t!("Tüm grupları genişlet") } else { t!("Tüm grupları daralt") };
@@ -3673,9 +3769,9 @@ impl Workspace {
                     .child(toolbar_icon(L::ListFilter))
             }))
             .when(!windows_theme, |d| {
-                d.children(on("sort").then(|| drop("cb-sort", L::ArrowUpDown, None, "Sırala ve gruplandır", in_folder, cx, |_, _| crate::ctx_menu::BarMenu::Sort)))
+                d.children(on("sort").then(|| drop("cb-sort", L::ArrowUpDown, None, "Sırala ve gruplandır", in_folder, look("sort"), cx, |_, _| crate::ctx_menu::BarMenu::Sort)))
                     .children(on("view").then(|| {
-                        drop("cb-view", L::LayoutGrid, None, "Görünüm", true, cx, move |this, _| crate::ctx_menu::BarMenu::View { dual: this.tabs[this.active].right.is_some(), shelf: this.shelf_open })
+                        drop("cb-view", L::LayoutGrid, None, "Görünüm", true, look("view"), cx, move |this, _| crate::ctx_menu::BarMenu::View { dual: this.tabs[this.active].right.is_some(), shelf: this.shelf_open })
                     }))
             })
             .children(on("preview").then(sep))
@@ -3696,6 +3792,7 @@ impl Workspace {
                         this.toggle_preview(cx);
                     }))
             }))
+            // (Settings, when it is a button of its own, stands in the address row: issue 399)
     }
 
     fn render_breadcrumb(&mut self, loc: &Location, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -3849,6 +3946,31 @@ impl Workspace {
         row
     }
 
+    /// The eject button of a drive's row: removed the way Explorer removes it (the shell's verb, on the shell thread); a drive that
+    /// is still there afterwards has files open on it, and is told so. The sidebar reads the drives again either way.
+    pub(crate) fn eject_drive(&mut self, letter: char, window: &mut Window, cx: &mut Context<Self>) {
+        let places = self.places.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let done = cx
+                .background_executor()
+                .spawn(async move {
+                    let r = rf_win::sta::call(std::time::Duration::from_secs(30), move || rf_win::volume::eject(letter).map_err(|e| e.to_string()));
+                    let still = std::path::Path::new(&format!("{letter}:\\")).exists();
+                    (r, still)
+                })
+                .await;
+            let _ = cx.update(|window, cx| {
+                places.update(cx, |pl, cx| pl.refresh(cx));
+                let (r, still) = done;
+                if !matches!(r, Some(Ok(()))) || still {
+                    log::warn!("sidebar: {letter}: could not be removed safely: {r:?} (still there: {still})");
+                    crate::prompt::notice(crate::i18n::t("Güvenle çıkar"), crate::i18n::t("Kullanımda: açık dosyaları kapatıp yeniden deneyin").to_string(), window, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     fn sidebar_item(
         &self,
         id: ElementId,
@@ -3922,6 +4044,21 @@ impl Workspace {
         };
         let pin_label = label.clone();
         let pin_id = id.clone();
+        // a USB stick's or a disc's row: "Güvenle çıkar" at its end, as in Explorer's navigation pane
+        let eject_letter = if rail {
+            None
+        } else {
+            target.path().and_then(|path| {
+                self.places
+                    .read(cx)
+                    .drives
+                    .iter()
+                    .find(|d| d.root == path && matches!(d.kind, rf_win::DriveKind::Removable | rf_win::DriveKind::Optical))
+                    .map(|d| d.letter)
+            })
+        };
+        let eject_id = id.clone();
+        let eject_hover = p.pressed;
         let windows_home = windows_theme && matches!(&target, Location::Home);
         let recycle_icon_watch = windows_theme && matches!(&target, Location::RecycleBin);
         let shell_icon = if windows_theme {
@@ -3931,7 +4068,7 @@ impl Workspace {
                 Location::RecycleBin => {
                     let state = self.places.read(cx).recycle_full.map_or(0, |full| if full { 2 } else { 1 });
                     self.images.update(cx, |images, cx| {
-                        images.shell_icon_state("::{645ff040-5081-101b-9f08-00aa002f954e}", icon_px, state, cx)
+                        images.shell_icon_state_ui("::{645ff040-5081-101b-9f08-00aa002f954e}", icon_px, state, cx)
                     })
                 }
                 _ => {
@@ -3944,7 +4081,7 @@ impl Workspace {
                         });
                     parsing.and_then(|path| {
                         self.images.update(cx, |images, cx| {
-                            images.shell_icon(&path, icon_px, cx)
+                            images.shell_icon_ui(&path, icon_px, cx)
                         })
                     })
                 }
@@ -4016,7 +4153,8 @@ impl Workspace {
                     v_flex()
                         .flex_1()
                         .overflow_hidden()
-                        .child(div().whitespace_nowrap().overflow_hidden().text_ellipsis().child(label))
+                        // (room for the eject button, which stands over the name's line so the drive's bar keeps its full width)
+                        .child(div().whitespace_nowrap().overflow_hidden().text_ellipsis().when(eject_letter.is_some(), |d| d.pr(px(22.))).child(label))
                         .children(extra),
                 )
             })
@@ -4043,7 +4181,27 @@ impl Workspace {
                         ),
                 )
             })
-
+            .when_some(eject_letter, |d, letter| {
+                d.child(
+                    div()
+                        .id((eject_id.clone(), "eject"))
+                        .absolute()
+                        .right(px(if windows_theme { 8. } else { 6. }))
+                        .top(px(4.))
+                        .size(px(24.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(theme::RADIUS_SM)
+                        .hover(move |s| s.bg(eject_hover))
+                        .tooltip(|w, cx| gpui_kit::component::tooltip::Tooltip::new(crate::i18n::t("Güvenle çıkar")).build(w, cx))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            cx.stop_propagation();
+                            this.eject_drive(letter, window, cx);
+                        }))
+                        .child(Icon::new(L::Eject).size(px(14.)).text_color(p.text_tertiary)),
+                )
+            })
             .on_click(cx.listener(move |this, _, window, cx| this.navigate(target.clone(), window, cx)))
             .when(recycle_icon_watch, |d| {
                 d.on_hover(cx.listener(|this, hovered: &bool, _, cx| {
@@ -4442,7 +4600,8 @@ impl Workspace {
             cx,
             &[],
         );
-        // Files: Settings stays at the bottom of the sidebar, under a divider
+        // Files: Settings stays at the bottom of the sidebar, under a divider (unless it is a button of its own, in the address row)
+        let settings_on_bar = cx.global::<crate::settings::Settings>().toolbar_extra.iter().any(|k| k == "settings");
         v_flex()
             .w(px(if self.sidebar_rail { RAIL_W } else { self.sidebar_w }))
             .h_full()
@@ -4519,8 +4678,11 @@ impl Workspace {
             )
             // (the Explorer look: the line runs the sidebar's whole width, under the scrollbar's track too; inset, it stopped 8 px short
             // of the track's right edge and left a notch in the corner, issue 229)
-            .child(div().when(!explorer_look, |d| d.mx_2()).h(px(1.)).when(explorer_look, |d| d.flex_shrink_0()).bg(p.divider))
-            .child(div().px_2().py_1().child(settings))
+            // (not while Settings is the command bar's button: issue 295)
+            .when(!settings_on_bar, |d| {
+                d.child(div().when(!explorer_look, |d| d.mx_2()).h(px(1.)).when(explorer_look, |d| d.flex_shrink_0()).bg(p.divider))
+                    .child(div().px_2().py_1().child(settings))
+            })
     }
 
     fn render_statusbar(&mut self, p: &Palette, strip_bar_w: Option<f32>, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -4790,6 +4952,7 @@ fn tooltip_text(id: &str) -> &'static str {
         "fwd" => t!("İleri  (Alt+→)"),
         "up" => t!("Üst klasör  (Alt+↑)"),
         "refresh" => t!("Yenile  (F5)"),
+        "settings" => t!("Ayarlar"),
         "hidden" => t!("Gizli öğeleri göster/gizle  (Ctrl+H)"),
         "terminal" => t!("Terminalde aç"),
         "sort" => t!("Sıralama ve gruplama"),
@@ -5284,6 +5447,7 @@ impl Render for Workspace {
             static FIRST: std::sync::Once = std::sync::Once::new();
             FIRST.call_once(|| crate::start_mark("first render"));
         }
+        crate::image_cache::set_ui_scale(window.scale_factor());
         // the text size (Settings > Appearance, issue 89): the window's base size, which the texts are given in
         let rem = crate::settings::rem_for(cx.global::<crate::settings::Settings>().text_percent);
         if f32::from(window.rem_size()) != rem {
@@ -5361,6 +5525,8 @@ impl Render for Workspace {
                 // engine has drawn (`check_glass` does that): until then, and for good if the engine gives up, the window has Mica.
                 BackdropPref::Glass => WindowBackgroundAppearance::MicaBackdrop,
             }));
+            // (a main window keeps the system's corners whatever the material: Acrylic asks for a popup's small ones, issue 385)
+            rf_win::window::set_system_corners(crate::look::window::hwnd_of(window));
             if backdrop == BackdropPref::Glass {
                 self.start_glass(p.dark, window, cx);
             }
@@ -6045,7 +6211,30 @@ impl Render for Workspace {
                             .children(star_strip)
                             .children(donate_strip)
                             .when(show_statusbar, |d| d.child(status))
-                            .children(picker_footer),
+                            .children(picker_footer)
+                            // Windows' own Open / Save keys in rustyfiles' dialog (issue 389): Alt+S saves, Alt+O opens (a folder dialog
+                            // takes either), Alt+N goes to the name box; from the list or from the box
+                            .when(self.picker.is_some(), |d| {
+                                d.capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                                    let k = &ev.keystroke;
+                                    if !k.modifiers.alt || k.modifiers.control || k.modifiers.shift {
+                                        return;
+                                    }
+                                    let Some(s) = this.picker() else { return };
+                                    use rustyfiles_dialog::proto::Mode;
+                                    match (k.key.as_str(), s.req.mode) {
+                                        ("s", Mode::Save | Mode::Folder) | ("o", Mode::Open | Mode::Folder) => {
+                                            cx.stop_propagation();
+                                            crate::picker::accept(this, window, cx);
+                                        }
+                                        ("n", _) => {
+                                            cx.stop_propagation();
+                                            s.name.update(cx, |st, cx| st.focus(window, cx));
+                                        }
+                                        _ => {}
+                                    }
+                                }))
+                            }),
                     ),
             )
             .when(!windows_theme && !compact, |d| d.child(div().h(px(8.))))

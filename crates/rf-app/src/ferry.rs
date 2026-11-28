@@ -132,6 +132,10 @@ pub struct Ferry {
     /// The speed tests running now (by device), and the last result with each device in this run.
     measuring: std::collections::HashSet<String>,
     speeds: HashMap<String, SpeedResult>,
+    /// Each question's asking (by key), so that the three-minute end of an earlier one with the same key does not take a newer one
+    /// away (issue 398: pairing again within three minutes, the panel went at the first try's end).
+    asked: HashMap<String, u64>,
+    next_ask: u64,
 }
 
 /// Settings > Ferry on screen, in `window`, last drawn at `seen`; `restore` is the visibility to go back to when it goes.
@@ -308,6 +312,12 @@ fn on_event(ev: Ev, cx: &mut App) {
         }
         Ev::Paired(peer) => {
             forget_question(&Question::Pair { peer, name: String::new(), code: String::new() }.key(), cx);
+            // A pairing is over: no pairing question stays, whatever device it named (issue 394: the panel stayed on the screen
+            // after a pairing that worked). Two pairings at once are not a thing a user does.
+            let keys: Vec<String> = cx.global::<Ferry>().questions.iter().filter(|q| matches!(q, Question::Pair { .. })).map(Question::key).collect();
+            for key in keys {
+                forget_question(&key, cx);
+            }
             cx.refresh_windows();
         }
         Ev::Visibility(v) => {
@@ -405,11 +415,18 @@ fn ask(q: Question, cx: &mut App) {
     if toasted {
         f.in_toast.insert(key.clone());
     }
+    f.next_ask += 1;
+    let this = f.next_ask;
+    f.asked.insert(key.clone(), this);
     sync_window(cx);
-    // the other side stops waiting after three minutes: the question goes with it
+    // the other side stops waiting after three minutes: the question goes with it (only this asking of it)
     cx.spawn(async move |cx| {
         cx.background_executor().timer(QUESTION_LIFE).await;
-        cx.update(|cx| forget_question(&key, cx));
+        cx.update(|cx| {
+            if cx.has_global::<Ferry>() && cx.global::<Ferry>().asked.get(&key) == Some(&this) {
+                forget_question(&key, cx);
+            }
+        });
     })
     .detach();
 }
@@ -436,6 +453,7 @@ fn forget_question(key: &str, cx: &mut App) {
     }
     let f = cx.global_mut::<Ferry>();
     f.questions.retain(|x| x.key() != key);
+    f.asked.remove(key);
     if f.in_toast.remove(key) {
         rf_win::toast_post::remove(crate::installer::APP_ID, key);
     }
@@ -595,16 +613,22 @@ fn sync_window(cx: &mut App) {
     let Some(f) = cx.try_global::<Ferry>() else { return };
     let empty = f.questions.iter().all(|q| f.in_toast.contains(&q.key()));
     let window = f.window;
+    // (an answer comes from a click IN the window, while the window is busy and cannot be updated: the update failed, the handle
+    // was dropped all the same, and the empty window stayed on the screen with nothing to close it, issue 394; so it is done next)
     match (empty, window) {
         (true, Some(w)) => {
             cx.global_mut::<Ferry>().window = None;
-            let _ = w.update(cx, |_, window, _| window.remove_window());
+            cx.defer(move |cx| {
+                let _ = w.update(cx, |_, window, _| window.remove_window());
+            });
         }
         (false, Some(w)) => {
-            if w.update(cx, |_, _, cx| cx.notify()).is_err() {
-                cx.global_mut::<Ferry>().window = None;
-                open_window(cx);
-            }
+            cx.defer(move |cx| {
+                if w.update(cx, |_, _, cx| cx.notify()).is_err() && cx.try_global::<Ferry>().is_some_and(|f| f.window == Some(w)) {
+                    cx.global_mut::<Ferry>().window = None;
+                    open_window(cx);
+                }
+            });
         }
         (false, None) => open_window(cx),
         (true, None) => {}
@@ -626,11 +650,18 @@ fn open_window(cx: &mut App) {
         is_movable: false,
         is_resizable: false,
         is_minimizable: false,
-        // the app's own popup look: on HyperGlass when that is the backdrop (as the quick search), else Windows' acrylic
-        window_background: crate::theme::popup_material(glassy(cx)),
+        // the app's own popup look: on HyperGlass when that is the backdrop (as the quick search), else Windows' acrylic; the popup
+        // menus' material when one is chosen (issue 380)
+        window_background: match cx.global::<Settings>().menu_material.for_panel(glassy(cx), false, crate::settings::materials_available()) {
+            Some((_, bg, _)) => bg,
+            None => crate::theme::popup_material(glassy(cx)),
+        },
         ..Default::default()
     };
-    let glass = glassy(cx);
+    let glass = match cx.global::<Settings>().menu_material.for_panel(glassy(cx), false, crate::settings::materials_available()) {
+        Some((liquid, _, _)) => liquid,
+        None => glassy(cx),
+    };
     match cx.open_window(opts, move |window, cx| {
         let hwnd = crate::look::window::hwnd_of(window);
         rf_win::window::set_dark_mode(hwnd, Palette::for_window(window).dark);
@@ -667,12 +698,22 @@ impl Render for QuestionView {
             .try_global::<Ferry>()
             .map(|f| f.questions.iter().filter(|q| !f.in_toast.contains(&q.key())).cloned().collect())
             .unwrap_or_default();
-        let Some(q) = questions.first().cloned() else { return div().into_any_element() };
+        let Some(q) = questions.first().cloned() else {
+            // nothing left to ask: the window goes, whatever lost it (it stayed on the screen, empty, issue 394)
+            let me = window.window_handle().window_id();
+            if cx.try_global::<Ferry>().is_some_and(|f| f.window.is_some_and(|w| w.window_id() == me)) {
+                cx.global_mut::<Ferry>().window = None;
+            }
+            window.remove_window();
+            return div().into_any_element();
+        };
         let waiting = questions.len() - 1;
         let (title, lines, code, no, yes) = texts(&q);
-        let (qn, qy) = (q.clone(), q);
+        let (qn, qy, qx) = (q.clone(), q.clone(), q);
         // over glass a wash, or the plain fill until the glass runs (never a see-through window with nothing behind it)
-        let fill = self.glass.as_ref().map(|g| crate::glass_watch::panel_fill(p.dark, g.fallback())).or_else(|| crate::theme::popup_fill(&p));
+        // (a solid popup material: the window is opaque, so the panel paints its own card)
+        let opaque = cx.global::<Settings>().menu_material.for_panel(false, false, crate::settings::materials_available()).is_some_and(|(_, _, o)| o);
+        let fill = if opaque { Some(p.card_bg) } else { self.glass.as_ref().map(|g| crate::glass_watch::panel_fill(p.dark, g.fallback())).or_else(|| crate::theme::popup_fill(&p)) };
         let content = v_flex()
             .w_full()
             .p_4()
@@ -683,7 +724,23 @@ impl Render for QuestionView {
                     .items_center()
                     .child(Icon::new(L::Send).size(px(16.)).text_color(p.accent))
                     .child(div().text_xs().text_color(p.text_secondary).child("Ferry"))
-                    .children((waiting > 0).then(|| div().ml_auto().text_xs().text_color(p.text_secondary).child(format!("+{waiting}")))),
+                    .children((waiting > 0).then(|| div().ml_auto().text_xs().text_color(p.text_secondary).child(format!("+{waiting}"))))
+                    // (it can always be closed: as its "no", issue 394)
+                    .child(
+                        div()
+                            .id("ferry-close")
+                            .when(waiting == 0, |d| d.ml_auto())
+                            .size(px(24.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(crate::theme::RADIUS_SM)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(p.hover))
+                            .tooltip(|w, cx| gpui_kit::component::tooltip::Tooltip::new(t!("Kapat")).build(w, cx))
+                            .child(Icon::new(L::X).size(px(14.)).text_color(p.text_secondary))
+                            .on_click(move |_, _, cx| answer(&qx, false, cx)),
+                    ),
             )
             .child(div().mt_1().text_sm().font_weight(FontWeight::SEMIBOLD).whitespace_normal().child(title))
             .children(lines.into_iter().map(|line| div().text_xs().text_color(p.text_secondary).whitespace_normal().child(line)))

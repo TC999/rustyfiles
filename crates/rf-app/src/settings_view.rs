@@ -187,7 +187,10 @@ fn matching(all: Vec<Found>, query: &str) -> Vec<Found> {
     let mut seen = HashSet::new();
     all.into_iter()
         .filter(|f| {
-            let text = rf_core::entry::fold_case(&format!("{} {}", f.title, f.desc.as_deref().unwrap_or("")));
+            // (the English name too, in any other language: issue 381, a setting known from an English issue or changelog)
+            let desc = f.desc.as_deref().unwrap_or("");
+            let english = [crate::i18n::english_of(&f.title), crate::i18n::english_of(desc)];
+            let text = rf_core::entry::fold_case(&format!("{} {} {}", f.title, desc, english.iter().flatten().copied().collect::<Vec<_>>().join(" ")));
             !words.is_empty() && words.iter().all(|w| text.contains(w.as_str()))
         })
         // (a setting drawn twice on a page is one result)
@@ -501,17 +504,24 @@ fn expander(key: &'static str, p: &Palette, icon: L, title: &str, desc: Option<&
         .items_center()
         .justify_center()
         .rounded(theme::RADIUS_SM)
+        .child(Icon::new(if open { L::ChevronUp } else { L::ChevronDown }).size(px(14.)));
+    // The whole header opens and closes the card, as Windows 11's own Settings do (issue 392: only the small arrow did). A control
+    // in the header (a switch, a list) keeps its press to itself, or using it would also open or close the card.
+    let control = control.map(|c| div().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(c));
+    let header_control = h_flex().gap_2().items_center().children(control).child(chevron).into_any_element();
+    let body = div()
+        .id(SharedString::from(format!("exp-head-{key}")))
+        .rounded(theme::RADIUS)
+        .cursor_pointer()
         .hover(|s| s.bg(p.pressed))
-        .child(Icon::new(if open { L::ChevronUp } else { L::ChevronDown }).size(px(14.)))
         .on_click(move |_, window, cx| {
             let u = ui(cx);
             if !u.open.remove(key) {
                 u.open.insert(key);
             }
             window.refresh();
-        });
-    let header_control = h_flex().gap_2().items_center().children(control).child(chevron).into_any_element();
-    let body = card_body(p, icon, title.to_string().into(), desc.map(|d| d.to_string().into()), Some(header_control));
+        })
+        .child(card_body(p, icon, title.to_string().into(), desc.map(|d| d.to_string().into()), Some(header_control)));
     // (a search looks inside closed expanders too)
     let kids = if open || collecting() {
         let at = COLLECT_AT.with(|a| a.get());
@@ -960,6 +970,13 @@ fn general(p: &Palette, s: &Settings, cx: &mut App) -> Vec<AnyElement> {
         t!("Yeni sekmede adres çubuğuna yaz"),
         Some(t!("Ctrl+T ve + düğmesi: bir yolu hemen yazabilir ya da yapıştırabilirsiniz")),
         sw("new-tab-address", p, s.new_tab_address, |s, v| s.new_tab_address = v),
+    ));
+    v.push(card(
+        p,
+        L::Settings,
+        t!("Ayarlar ve Geri Dönüşüm Kutusu yeni sekmede açılsın"),
+        Some(t!("Açık klasör yerinde kalır. Giriş sayfasından ya da bu iki sayfadan birinden açılınca aynı sekmede açılırlar.")),
+        sw("pages-new-tab", p, s.pages_in_new_tab, |s, v| s.pages_in_new_tab = v),
     ));
     v.push(card(
         p,
@@ -1980,6 +1997,11 @@ fn appearance(p: &Palette, s: &Settings, cx: &mut App) -> Vec<AnyElement> {
     ));
     let (bar_hidden, bar_extra) = (s.toolbar_hidden.clone(), s.toolbar_extra.clone());
     let commands = s.toolbar_commands.clone();
+    let explorer = s.windows_file_explorer_theme;
+    let bar_order = crate::toolbar_layout::order(&s.toolbar_order, explorer);
+    let bar_looks = s.toolbar_look.clone();
+    let icon_size = s.toolbar_icon_size;
+    let windows_icons = s.toolbar_windows_icons;
     // the switch and the buttons it shows stand together (issue 111)
     v.push(card(p, L::PanelTop, t!("Araç çubuğunu göster"), Some("Ctrl+Shift+B"), sw("toolbar", p, s.show_toolbar, |s, v| s.show_toolbar = v)));
     v.push(expander(
@@ -1990,8 +2012,9 @@ fn appearance(p: &Palette, s: &Settings, cx: &mut App) -> Vec<AnyElement> {
         None,
         None,
         move || {
+            use crate::toolbar_layout::{Look, SEP};
             // (key, id, label, off unless asked for)
-            const BUTTONS: [(&str, &str, &str, bool); 17] = [
+            const BUTTONS: [(&str, &str, &str, bool); 27] = [
                 ("new", "tb-new", "Yeni", false),
                 ("newfolder", "tb-newfolder", "Yeni klasör", true),
                 ("cut", "tb-cut", "Kes", false),
@@ -2004,33 +2027,127 @@ fn appearance(p: &Palette, s: &Settings, cx: &mut App) -> Vec<AnyElement> {
                 ("edit", "tb-edit", "Metin düzenleyicide düzenle", true),
                 ("terminal", "tb-terminal", "Terminalde aç", true),
                 ("hidden", "tb-hidden", "Gizli öğeleri göster/gizle", true),
+                ("extensions", "tb-extensions", "Dosya uzantıları", true),
+                ("dual", "tb-dual", "Çift panel", true),
+                ("shelf", "tb-shelf", "Raf", true),
                 ("refresh", "tb-refresh", "Yenile", true),
+                ("undo", "tb-undo", "Geri al", true),
+                ("redo", "tb-redo", "Yinele", true),
+                ("selectall", "tb-selectall", "Tümünü seç", true),
+                ("selectnone", "tb-selectnone", "Hiçbirini seçme", true),
+                ("invertsel", "tb-invertsel", "Seçimi tersine çevir", true),
+                ("more", "tb-more", "Diğer", false),
                 ("filter", "tb-filter", "Filtrele", false),
                 ("sort", "tb-sort", "Sırala ve gruplandır", false),
                 ("view", "tb-view", "Görünüm", false),
                 ("preview", "tb-preview", "Önizleme paneli", false),
+                ("settings", "tb-settings", "Ayarlar", true),
             ];
-            let mut rows: Vec<_> = BUTTONS
-                .iter()
-                .map(|&(key, id, label, optional)| {
-                    let shown = if optional { bar_extra.iter().any(|k| k == key) } else { !bar_hidden.iter().any(|k| k == key) };
-                    sub(
-                        &pp,
-                        crate::i18n::t(label),
-                        None,
-                        switch(id, &pp, shown, move |_, cx| {
-                            settings::update(cx, |s| {
-                                let list = if optional { &mut s.toolbar_extra } else { &mut s.toolbar_hidden };
-                                list.retain(|k| k != key);
-                                // (the optional ones are listed when on, the others when off)
-                                if shown != optional {
-                                    list.push(key.to_string());
-                                }
-                            })
-                        }),
-                    )
+            let button_of = |key: &str| BUTTONS.iter().find(|b| b.0 == key).copied();
+            let shown_switch = |key: &'static str, id: &'static str, optional: bool| {
+                let shown = if optional { bar_extra.iter().any(|k| k == key) } else { !bar_hidden.iter().any(|k| k == key) };
+                switch(id, &pp, shown, move |_, cx| {
+                    settings::update(cx, |s| {
+                        let list = if optional { &mut s.toolbar_extra } else { &mut s.toolbar_hidden };
+                        list.retain(|k| k != key);
+                        // (the optional ones are listed when on, the others when off)
+                        if shown != optional {
+                            list.push(key.to_string());
+                        }
+                    })
                 })
-                .collect();
+            };
+            // a button's look: as it was, its picture, its word, or both (issue 374)
+            let look_box = |key: &'static str| {
+                let now = crate::toolbar_layout::look_of(&bar_looks, key);
+                let name = |l: Look| -> &'static str {
+                    match l {
+                        Look::Auto => t!("Otomatik"),
+                        Look::Icon => t!("Simge"),
+                        Look::Text => t!("Yazı"),
+                        Look::Both => t!("Simge ve yazı"),
+                    }
+                };
+                crate::select_box::select_box_h(format!("tb-look-{key}"), &pp, name(now), 32., move |_| {
+                    [Look::Auto, Look::Icon, Look::Text, Look::Both]
+                        .into_iter()
+                        .map(|l| {
+                            Choice::new(name(l), l == now, move |_, cx| {
+                                settings::update(cx, |s| s.toolbar_look = crate::toolbar_layout::with_look(&s.toolbar_look, key, l))
+                            })
+                        })
+                        .collect()
+                })
+            };
+            let set_order = move |o: Vec<String>, cx: &mut App| settings::update(cx, move |s| s.toolbar_order = o);
+            // up and down for the entry at `i` of the left group (issue 373: "move it to another position")
+            let arrows = |i: usize| {
+                let (up, down) = (bar_order.clone(), bar_order.clone());
+                h_flex()
+                    .gap_1()
+                    .child(icon_button(("tb-up", i), &pp, L::ChevronUp, t!("Yukarı taşı"), move |_, cx| set_order(crate::toolbar_layout::moved(&up, i, true), cx)))
+                    .child(icon_button(("tb-down", i), &pp, L::ChevronDown, t!("Aşağı taşı"), move |_, cx| set_order(crate::toolbar_layout::moved(&down, i, false), cx)))
+            };
+            let mut rows: Vec<AnyElement> = Vec::new();
+            // the pictures' size (issue 248)
+            rows.push(sub(
+                &pp,
+                t!("Simge boyutu"),
+                None,
+                crate::select_box::select_box_h(
+                    "tb-icon-size",
+                    &pp,
+                    match icon_size {
+                        settings::ToolbarIconSize::Small => t!("Küçük"),
+                        settings::ToolbarIconSize::Medium => t!("Orta boy"),
+                        settings::ToolbarIconSize::Large => t!("Büyük"),
+                    },
+                    32.,
+                    move |_| {
+                        [(settings::ToolbarIconSize::Small, t!("Küçük")), (settings::ToolbarIconSize::Medium, t!("Orta boy")), (settings::ToolbarIconSize::Large, t!("Büyük"))]
+                            .into_iter()
+                            .map(|(v, l)| Choice::new(l, v == icon_size, move |_, cx| settings::update(cx, |s| s.toolbar_icon_size = v)))
+                            .collect()
+                    },
+                ),
+            ));
+            // Windows' own pictures, as in the Explorer look (issue 382)
+            if !explorer {
+                rows.push(sub(
+                    &pp,
+                    t!("Windows simgeleri"),
+                    Some(t!("Araç çubuğunda Windows Dosya Gezgini'nin simgeleri")),
+                    switch("tb-win-icons", &pp, windows_icons, move |_, cx| settings::update(cx, |s| s.toolbar_windows_icons = !windows_icons)),
+                ));
+            }
+            // the left group in its order, lines included
+            for (i, name) in bar_order.iter().enumerate() {
+                if name == SEP {
+                    let o = bar_order.clone();
+                    let remove = button(("tb-sep-x", i), &pp, t!("Kaldır"), move |_, cx| set_order(crate::toolbar_layout::without(&o, i), cx));
+                    rows.push(sub(&pp, t!("Ayırıcı"), None, h_flex().gap_2().items_center().child(arrows(i)).child(remove).into_any_element()));
+                    continue;
+                }
+                let Some((key, id, label, optional)) = button_of(name) else { continue };
+                let controls = h_flex().gap_2().items_center().child(look_box(key)).child(arrows(i)).child(shown_switch(key, id, optional));
+                rows.push(sub(&pp, crate::i18n::t(label), None, controls.into_any_element()));
+            }
+            // the right group: shown or not, and the look of Sort and View (their place is fixed, as Explorer's)
+            for &(key, id, label, optional) in BUTTONS.iter().filter(|b| !bar_order.iter().any(|o| o == b.0)) {
+                let controls = h_flex().gap_2().items_center().when(matches!(key, "sort" | "view"), |d| d.child(look_box(key))).child(shown_switch(key, id, optional));
+                rows.push(sub(&pp, crate::i18n::t(label), None, controls.into_any_element()));
+            }
+            let with_line = bar_order.clone();
+            rows.push(sub(
+                &pp,
+                t!("Ayırıcı"),
+                None,
+                h_flex()
+                    .gap_2()
+                    .child(button("tb-add-sep", &pp, t!("Ayırıcı ekle"), move |_, cx| set_order(crate::toolbar_layout::with_line(&with_line), cx)))
+                    .child(button("tb-reset-order", &pp, t!("Varsayılan sıra"), |_, cx| settings::update(cx, |s| s.toolbar_order.clear())))
+                    .into_any_element(),
+            ));
             rows.extend(commands.into_iter().enumerate().map(|(i, command)| {
                 sub(&pp, command.name(), Some(&command.program), crate::quick_commands::controls(i, command.clone(), &pp).into_any_element())
             }));
@@ -2436,7 +2553,8 @@ fn files(p: &Palette, s: &Settings, cx: &mut App) -> Vec<AnyElement> {
                     .rounded(theme::RADIUS_SM)
                     .bg(hsla_alpha(0xFCE100, 0.12))
                     .child(Icon::new(L::CircleAlert).size(px(14.)).text_color(rgb(0xFCE100)))
-                    .child(div().text_xs().text_color(pp.text).child(t!("Büyük klasörlerde disk ve işlemci yükü artabilir; hesap arka planda yapılır, arayüz donmaz.")))
+                    // (wrapped: a longer language ran out of the box, issue 283)
+                    .child(div().flex_1().min_w_0().whitespace_normal().text_xs().text_color(pp.text).child(t!("Büyük klasörlerde disk ve işlemci yükü artabilir; hesap arka planda yapılır, arayüz donmaz.")))
                     .into_any_element(),
             ]
         },
@@ -3103,7 +3221,7 @@ mod ext_tests {
     }
 }
 
-fn advanced(p: &Palette, s: &Settings, cx: &App) -> Vec<AnyElement> {
+fn advanced(p: &Palette, s: &Settings, cx: &mut App) -> Vec<AnyElement> {
     let start_on = rf_win::dialogs::starts_with_windows();
     let load = hybrid::load_snapshot();
     let pct = |v: Option<f32>| v.map(crate::i18n::pct).unwrap_or_else(|| "—".into());
@@ -3332,18 +3450,36 @@ fn advanced(p: &Palette, s: &Settings, cx: &App) -> Vec<AnyElement> {
             }),
         ));
     }
-    // the apps whose Open / Save windows stay Windows' own (added with the dialog's own button, issue 371)
-    for (i, app) in s.dialog_windows_apps.iter().enumerate() {
-        let key = app.clone();
-        out.push(card(
+    // the apps whose Open / Save windows stay Windows' own (added with the dialog's own button, issue 371), in a card of their own
+    // that opens: one card per program made the page long (the reporter: "a sub-section ... to keep the menu clean")
+    if !s.dialog_windows_apps.is_empty() {
+        let apps = s.dialog_windows_apps.clone();
+        let pp = *p;
+        out.push(expander(
+            "dlg-windows-apps",
             p,
             L::AppWindow,
-            app.trim_end_matches(".exe"),
-            Some(t!("Bu programda Windows'un Aç / Kaydet penceresi açılır.")),
-            button(("dlg-windows", i), p, t!("Kaldır"), move |_, cx| {
-                let key = key.clone();
-                crate::settings::update(cx, move |s| s.dialog_windows_apps.retain(|a| *a != key));
-            }),
+            t!("Windows'un Aç / Kaydet penceresini alan programlar"),
+            None,
+            None,
+            move || {
+                apps.iter()
+                    .enumerate()
+                    .map(|(i, app)| {
+                        let key = app.clone();
+                        sub(
+                            &pp,
+                            app.trim_end_matches(".exe"),
+                            Some(t!("Bu programda Windows'un Aç / Kaydet penceresi açılır.")),
+                            button(("dlg-windows", i), &pp, t!("Kaldır"), move |_, cx| {
+                                let key = key.clone();
+                                crate::settings::update(cx, move |s| s.dialog_windows_apps.retain(|a| *a != key));
+                            }),
+                        )
+                    })
+                    .collect()
+            },
+            cx,
         ));
     }
     out.extend([
