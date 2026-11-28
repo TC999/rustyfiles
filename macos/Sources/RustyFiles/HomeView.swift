@@ -132,7 +132,7 @@ final class HomeView: FlippedView {
         }
     }
 
-    /// Recently used items under the home folder, newest first, at most 14 (Spotlight's "last
+    /// Recently used items under the home folder, newest first, at most 30, as on Windows (Spotlight's "last
     /// used" date, as Finder's Recents; the Windows app reads Windows' Recent folder).
     private func reloadRecent() {
         query?.stop()
@@ -162,7 +162,7 @@ final class HomeView: FlippedView {
             if path.contains("/Library/") || path.contains(".app/") || path.hasSuffix(".app") || !seen.insert(path).inserted { continue }
             guard FileManager.default.fileExists(atPath: path) else { continue }
             items.append((URL(fileURLWithPath: path), date))
-            if items.count == 14 { break }
+            if items.count == 30 { break }
         }
         q.stop()
         showRecent(items)

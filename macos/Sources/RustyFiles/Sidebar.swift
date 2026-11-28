@@ -24,6 +24,14 @@ final class SidebarView: FlippedView {
         /// A drive: how full it is (0…1) and "used / total", for its bar.
         var used: Double? = nil
         var space: String? = nil
+        /// A drive that can be ejected: an eject button at the end of its row (Windows issue 406).
+        var ejectable = false
+    }
+
+    /// A USB stick, a disc, a disk image, a server: what macOS can eject.
+    static func isEjectable(_ url: URL) -> Bool {
+        let v = try? url.resourceValues(forKeys: [.volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsLocalKey, .volumeIsInternalKey])
+        return v?.volumeIsEjectable == true || v?.volumeIsRemovable == true || v?.volumeIsLocal == false || v?.volumeIsInternal == false
     }
 
     /// The folder tree's open folders (paths), kept across starts.
@@ -209,6 +217,7 @@ final class SidebarView: FlippedView {
                     item.used = Double(used) / Double(total)
                     item.space = "\(formatSize(bytes: UInt64(used))) / \(formatSize(bytes: UInt64(total)))"
                 }
+                item.ejectable = Self.isEjectable(v)
                 items.append(item)
             }
         }
@@ -475,9 +484,15 @@ final class SidebarListView: HoverView {
             } else {
                 Draw.icon(item.icon, in: NSRect(x: r.minX + 8, y: r.minY, width: 16, height: r.height), size: 16, color: iconColor)
             }
+            // (an ejectable drive's name and bar make room for its eject button)
+            let ejectW: CGFloat = item.ejectable ? 22 : 0
+            if item.ejectable {
+                let hotEject = hoverPoint.map { ejectRect(i).contains($0) } ?? false
+                Draw.icon("eject", in: ejectRect(i), size: 14, color: hotEject ? p.text : p.textTertiary)
+            }
             if let used = item.used {
                 // the name, a 2 px bar 5 under it, the numbers 2 under that (workspace.rs sidebar drives)
-                let x = r.minX + 8 + 16 + 8, w = r.width - 40
+                let x = r.minX + 8 + 16 + 8, w = r.width - 40 - ejectW
                 Draw.text(item.title, in: NSRect(x: x, y: r.minY + 6, width: w, height: 20), font: Metrics.textSm, color: p.text)
                 let bar = NSRect(x: x, y: r.minY + 6 + 20 + 3, width: w, height: 2)
                 Draw.roundedRect(bar, radius: 1, fill: p.pressed)
@@ -487,8 +502,15 @@ final class SidebarListView: HoverView {
                 }
                 continue
             }
-            Draw.text(item.title, in: NSRect(x: r.minX + 8 + 16 + 8, y: r.minY, width: r.width - 40, height: r.height), font: Metrics.textSm, color: p.text)
+            Draw.text(item.title, in: NSRect(x: r.minX + 8 + 16 + 8, y: r.minY, width: r.width - 40 - ejectW, height: r.height), font: Metrics.textSm, color: p.text)
         }
+    }
+
+    /// Where an ejectable drive's eject button is: at the end of its row, centred on the name.
+    private func ejectRect(_ i: Int) -> NSRect {
+        let r = rects()[i]
+        let midY = items[i].used != nil ? r.minY + 6 + 10 : r.midY
+        return NSRect(x: r.maxX - 8 - 16, y: midY - 8, width: 16, height: 16)
     }
 
     /// A middle click on a place opens it in a new tab (issue 325).
@@ -529,6 +551,10 @@ final class SidebarListView: HoverView {
         }
         let p = convert(event.locationInWindow, from: nil)
         guard let i = index(at: p) else { return }
+        if items[i].ejectable, let url = items[i].url, ejectRect(i).insetBy(dx: -4, dy: -4).contains(p) {
+            owner?.onEject?(url)
+            return
+        }
         // the tree's chevron opens and closes; the rest of the row goes there
         if items[i].kind == .tree, items[i].expandable, chevronRect(i).insetBy(dx: -4, dy: -6).contains(p) {
             owner?.toggle(items[i])
@@ -558,10 +584,7 @@ final class SidebarListView: HoverView {
             b.add(String(localized: "Hide this place"), "eye-off") { AppSettings.hiddenPlaces.append(url.standardizedFileURL.path) }
         }
         if item.kind == .drive {
-            let values = try? url.resourceValues(forKeys: [.volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsLocalKey, .volumeIsInternalKey])
-            let ejectable = values?.volumeIsEjectable == true || values?.volumeIsRemovable == true || values?.volumeIsLocal == false
-                || values?.volumeIsInternal == false
-            if ejectable {
+            if item.ejectable {
                 b.separator()
                 b.add(String(localized: "Eject"), "eject") { owner.onEject?(url) }
             }
