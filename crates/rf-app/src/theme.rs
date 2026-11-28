@@ -188,6 +188,14 @@ impl Palette {
         // 390; the dark theme's strip was see-through already). Where there is no material, or "Solid" is chosen, the greys stay.
         if explorer_look && !p.dark && crate::settings::materials_available() && !crate::settings::solid_backdrop() {
             p.titlebar_bg.a = 0.0;
+            // ... and the rest of the window too, as the dark theme's does: the sidebar on the material, the content on the light
+            // theme's translucent layer, the bars in their own tones but see-through. Opaque white, the chosen material showed in
+            // the title strip only (issue 390, Hypixice on 1.0.2).
+            let light = Self::light();
+            p.sidebar_bg = light.sidebar_bg;
+            p.content_bg = light.content_bg;
+            p.address_bg.a = 0.55;
+            p.toolbar_bg.a = 0.55;
         }
         if crate::settings::solid_backdrop() {
             // "Solid" material: Windows 11's plain window color instead of Mica
