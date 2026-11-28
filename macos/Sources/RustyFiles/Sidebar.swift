@@ -431,6 +431,12 @@ final class SidebarListView: HoverView {
                 Draw.text(item.title, in: NSRect(x: r.minX + 8, y: r.minY + 12, width: r.width - 16, height: 16), font: Metrics.textXsSemibold, color: p.textTertiary)
                 continue
             }
+            // a pin being moved: a line where it will go (after the target moving down, before it moving up)
+            if let to = pinTarget, to == i, let from = pinPress?.index, from != to {
+                let y = from < to ? r.maxY - 1 : r.minY - 1
+                p.accent.setFill()
+                NSBezierPath(roundedRect: NSRect(x: r.minX + 4, y: y, width: r.width - 8, height: 2), xRadius: 1, yRadius: 1).fill()
+            }
             // the selected item stands on the lens: no fill, no pill
             let isSelected = item.url.map { SidebarView.norm($0) == selected } ?? false
             if dropIndex == i {
@@ -491,7 +497,36 @@ final class SidebarListView: HoverView {
         owner?.onOpenInNewTab?(url)
     }
 
+    // MARK: pinned folders reordered by dragging one onto another (workspace.rs `move_pin`)
+
+    /// Where the pointer went down on a pinned folder, and the pin it is over once it moved.
+    private var pinPress: (index: Int, at: NSPoint)?
+    override var mouseDownCanMoveWindow: Bool { false }
+    private var pinTarget: Int? { didSet { if pinTarget != oldValue { needsDisplay = true } } }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        pinPress = index(at: p).flatMap { items[$0].kind == .pinned ? ($0, p) : nil }
+        pinTarget = nil
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let press = pinPress else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        guard pinTarget != nil || hypot(p.x - press.at.x, p.y - press.at.y) > 4 else { return }
+        autoscroll(with: event)
+        // the nearest pin up or down the list, so the ends are easy to reach
+        let pins = items.indices.filter { items[$0].kind == .pinned }
+        let r = rects()
+        pinTarget = pins.min { abs(r[$0].midY - p.y) < abs(r[$1].midY - p.y) } ?? press.index
+    }
+
     override func mouseUp(with event: NSEvent) {
+        defer { pinPress = nil; pinTarget = nil }
+        if let press = pinPress, let to = pinTarget {
+            if to != press.index, let from = items[press.index].url, let onto = items[to].url { Pins.move(from, onto: onto) }
+            return
+        }
         let p = convert(event.locationInWindow, from: nil)
         guard let i = index(at: p) else { return }
         // the tree's chevron opens and closes; the rest of the row goes there
@@ -551,6 +586,17 @@ enum Pins {
 
     static func save(_ urls: [URL]) {
         UserDefaults.standard.set(urls.map(\.path), forKey: key)
+    }
+
+    /// `from` takes the place of `onto` (by path: the drawn list may be from before).
+    static func move(_ from: URL, onto: URL) {
+        var list = load()
+        guard let a = list.firstIndex(where: { $0.standardizedFileURL == from.standardizedFileURL }),
+            let b = list.firstIndex(where: { $0.standardizedFileURL == onto.standardizedFileURL }), a != b
+        else { return }
+        list.insert(list.remove(at: a), at: b)
+        save(list)
+        NotificationCenter.default.post(name: .rfPinsChanged, object: nil)
     }
 }
 
