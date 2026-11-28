@@ -8,7 +8,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
-use gpui_kit::component::{Icon, h_flex};
+use gpui_kit::component::{Icon, h_flex, v_flex};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -34,6 +34,10 @@ pub struct PickSession {
     pub filter_ix: Cell<u32>,
     /// The selection the name box was last filled from.
     last_selection: RefCell<Vec<PathBuf>>,
+    /// The user has picked something in the list (a click in it, the arrow keys there). Until then a Save dialog's name box keeps
+    /// the name the app gave: a file the list selected by itself (the one saved last time, say) took its place, and a browser's
+    /// next download was saved over the file before it (issue 389).
+    pub touched: Cell<bool>,
     _sub: RefCell<Option<Subscription>>,
     /// Where the Open / Save button was last drawn, for Windows' "Snap To" (issue 148).
     pub ok_at: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -335,13 +339,16 @@ fn open_window(pipe: File, req: Request, cx: &mut App) {
             for p in others {
                 ws.add_quiet_tab(Location::Path(p), window, cx);
             }
-            let name = cx.new(|cx| InputState::new(window, cx).default_value(req.file_name.clone()));
+            // (the box's own words, shown while it is empty: the strip has no label beside it any more)
+            let hint = if req.mode == Mode::Folder { t!("Klasör:") } else { t!("Dosya adı:") }.trim_end_matches(':').to_string();
+            let name = cx.new(|cx| InputState::new(window, cx).placeholder(hint).default_value(req.file_name.clone()));
             let session = Rc::new(PickSession {
                 filter_ix: Cell::new(req.filter_index.max(1)),
                 req,
                 pipe: RefCell::new(pipe),
                 name: name.clone(),
                 last_selection: RefCell::new(Vec::new()),
+                touched: Cell::new(false),
                 _sub: RefCell::new(None),
                 ok_at: Rc::new(Cell::new(None)),
             });
@@ -498,6 +505,11 @@ fn sync_name(ws: &Workspace, s: &PickSession, window: &mut Window, cx: &mut App)
         s.name.update(cx, |st, cx| st.set_value("", window, cx));
         return;
     }
+    if s.req.mode == Mode::Save && !s.touched.get() {
+        // (taken as seen: only a selection the user makes from now on fills the box)
+        *s.last_selection.borrow_mut() = wanted;
+        return;
+    }
     if wanted.is_empty() || *s.last_selection.borrow() == wanted {
         return;
     }
@@ -647,10 +659,6 @@ fn tell(msg: &str, window: &mut Window, cx: &mut App) {
 /// The strip at the bottom of the window.
 pub(crate) fn footer(ws: &mut Workspace, s: &Rc<PickSession>, p: &Palette, window: &mut Window, cx: &mut Context<Workspace>) -> AnyElement {
     sync_name(ws, s, window, cx);
-    let label = match s.req.mode {
-        Mode::Folder => t!("Klasör:"),
-        _ => t!("Dosya adı:"),
-    };
     // the button says what it will do: the app's own words for a folder while a folder is what OK answers with
     let ok: SharedString = {
         let dir = ws.active_view().read(cx).current_dir();
@@ -668,7 +676,7 @@ pub(crate) fn footer(ws: &mut Workspace, s: &Rc<PickSession>, p: &Palette, windo
         let filters = s.req.filters.clone();
         let sel = s.filter_ix.get();
         // 36 px like the name field and the buttons beside it
-        div().w(px(240.)).flex_shrink_0().child(crate::select_box::select_box_h("pick-filter", p, current, 36., move |_| {
+        div().w(px(240.)).flex_shrink(1.).min_w(px(140.)).child(crate::select_box::select_box_h("pick-filter", p, current, 36., move |_| {
             filters
                 .iter()
                 .enumerate()
@@ -700,50 +708,31 @@ pub(crate) fn footer(ws: &mut Workspace, s: &Rc<PickSession>, p: &Palette, windo
             .when(!primary, |d| d.border_1().border_color(p.border).bg(p.card_bg).hover(|d| d.bg(p.hover)))
             .child(label)
     };
-    // the name field carries its own label (as a prefix), so everything fits on one row:
-    // [ Dosya adı | name …………… ] [ file type ▾ ] [ Aç ] [ İptal ]
+    // Two rows, as Windows' own dialog has them: the name over the whole width (it had what the type box and the buttons left over,
+    // less its label), then the window's switches, the file type, and the buttons at the right.
+    //   [ 🗎 name ……………………………………………………… ]
+    //   [pin][Windows]  [ file type ▾ ]        [ Save ] [ Cancel ]
     use gpui_kit::assets::IconName as L;
     let icon = if s.req.mode == Mode::Folder { L::Folder } else { L::File };
-    let prefix = h_flex()
-        .gap_2()
-        .pl_1()
-        .pr_2()
-        .mr_1()
-        .items_center()
-        .border_r_1()
-        .border_color(p.divider)
-        .text_sm()
-        .text_color(p.text_secondary)
-        .child(Icon::new(icon).size(px(15.)))
-        .child(div().whitespace_nowrap().child(label.trim_end_matches(':').to_string()));
-    h_flex()
+    let prefix = div().pl_1().pr_1().text_color(p.text_secondary).child(Icon::new(icon).size(px(15.)));
+    let name_row = h_flex()
         .w_full()
-        .flex_shrink_0()
-        .px_4()
-        .py_3()
+        .h(px(36.))
+        .px_2()
+        .items_center()
+        .rounded(theme::RADIUS_SM)
+        .bg(p.hover)
+        .border_1()
+        .border_color(p.border)
+        .child(div().flex_1().min_w_0().child(Input::new(&s.name).appearance(false).prefix(prefix)));
+    let action_row = h_flex()
+        .w_full()
         .gap_3()
         .items_center()
-        .border_t_1()
-        .border_color(p.divider)
-        // over glass this strip (name field, file type, buttons) has a wash of its own, as the window's layers are thin there
-        .bg(p.bar_bg)
         .children(start_pin(ws, s, p, cx))
         .children(windows_dialog_button(s, p, cx))
-        .child(
-            // the same field look as the select box next to it
-            h_flex()
-                .flex_1()
-                .min_w(px(200.))
-                .h(px(36.))
-                .px_2()
-                .items_center()
-                .rounded(theme::RADIUS_SM)
-                .bg(p.hover)
-                .border_1()
-                .border_color(p.border)
-                .child(div().flex_1().min_w_0().child(Input::new(&s.name).appearance(false).prefix(prefix))),
-        )
         .children(filter)
+        .child(div().flex_1())
         .child({
             // (where it is drawn, for "Snap To")
             let at = s.ok_at.clone();
@@ -752,7 +741,19 @@ pub(crate) fn footer(ws: &mut Workspace, s: &Rc<PickSession>, p: &Palette, windo
                 .child(canvas(move |b, _, _| at.set(Some(b)), |_, _, _, _| {}).absolute().top_0().left_0().size_full())
                 .on_click(cx.listener(|ws, _, window, cx| accept(ws, window, cx)))
         })
-        .child(button("pick-cancel", t!("İptal").into(), false).on_click(cx.listener(|ws, _, window, _| cancel(ws, window))))
+        .child(button("pick-cancel", t!("İptal").into(), false).on_click(cx.listener(|ws, _, window, _| cancel(ws, window))));
+    v_flex()
+        .w_full()
+        .flex_shrink_0()
+        .px_4()
+        .py_3()
+        .gap_2p5()
+        .border_t_1()
+        .border_color(p.divider)
+        // over glass this strip (name field, file type, buttons) has a wash of its own, as the window's layers are thin there
+        .bg(p.bar_bg)
+        .child(name_row)
+        .child(action_row)
         .into_any_element()
 }
 

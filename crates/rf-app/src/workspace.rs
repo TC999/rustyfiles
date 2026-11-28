@@ -1309,6 +1309,12 @@ impl Workspace {
                 cx.defer(move |cx| crate::open_main_window(Some(loc), None, Some(WindowBounds::Windowed(b)), cx));
             }
             FolderEvent::QuickLook => this.toggle_quick_look(cx),
+            // (Windows' own Open / Save dialog closes on Escape: ours too, issue 389)
+            FolderEvent::Escape => {
+                if this.picker.is_some() {
+                    crate::picker::cancel(this, window);
+                }
+            }
             FolderEvent::StartFilter(text) => {
                 // the first letter opens the bar with it; the next ones are typed into the bar, which has the focus now
                 let q = format!("{}{text}", emitter.read(cx).filter.query);
@@ -5833,6 +5839,10 @@ impl Render for Workspace {
                         .when(!side_by_side, |d| d.w_full())
                         .relative()
                         .capture_any_mouse_down(cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            // (in the Open / Save dialog: a pick of the user's own from now on, see PickSession::touched)
+                            if let Some(s) = this.picker() {
+                                s.touched.set(true);
+                            }
                             this.set_active_pane(is_right, cx)
                         }))
                         .child(view)
@@ -6209,7 +6219,14 @@ impl Render for Workspace {
                             .when(!windows_theme && compact, |d| d.rounded_tl(theme::RADIUS).border_l_1().border_t_1().border_color(p.border))
                             .children(content_commandbar)
                             .children(filter_strip)
-                            .child(main_row)
+                            // (in the Open / Save dialog, a click in the list is the user's own pick: PickSession::touched)
+                            .child(div().flex_1().min_h_0().flex().flex_col().when(self.picker.is_some(), |d| {
+                                d.capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, _| {
+                                    if let Some(s) = this.picker() {
+                                        s.touched.set(true);
+                                    }
+                                }))
+                            }).child(main_row))
                             // the floating card of a running operation (Settings → Aktarım ilerlemesi → Yüzen kart)
                             .children(cards)
                             .children(star_strip)
@@ -6219,7 +6236,22 @@ impl Render for Workspace {
                             // Windows' own Open / Save keys in rustyfiles' dialog (issue 389): Alt+S saves, Alt+O opens (a folder dialog
                             // takes either), Alt+N goes to the name box; from the list or from the box
                             .when(self.picker.is_some(), |d| {
+                                // the list's arrow keys pick as a click does (PickSession::touched); Escape, when nothing in the
+                                // window took it, closes the dialog as Windows' own does (issue 389)
                                 d.capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                                    let Some(s) = this.picker() else { return };
+                                    let k = &ev.keystroke;
+                                    let nav = matches!(k.key.as_str(), "up" | "down" | "left" | "right" | "home" | "end" | "pageup" | "pagedown");
+                                    if nav && !s.name.read(cx).focus_handle(cx).is_focused(window) {
+                                        s.touched.set(true);
+                                    }
+                                    // (Escape in the name box; in the list it is the list's, which tells us: FolderEvent::Escape)
+                                    if k.key == "escape" && !k.modifiers.modified() && s.name.read(cx).focus_handle(cx).is_focused(window) {
+                                        cx.stop_propagation();
+                                        crate::picker::cancel(this, window);
+                                    }
+                                }))
+                                .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                                     let k = &ev.keystroke;
                                     if !k.modifiers.alt || k.modifiers.control || k.modifiers.shift {
                                         return;

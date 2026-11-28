@@ -336,6 +336,8 @@ pub enum FolderEvent {
     OpenInNewWindow(Location),
     /// Space / Esc: open or close Quick Look for the focused item.
     QuickLook,
+    /// Escape with nothing of the list's own to undo (no rename, no DirectLook): an Open / Save dialog closes on it (issue 389).
+    Escape,
     /// Browsing into a protected archive: (archive, the given password was wrong).
     NeedPassword(PathBuf, bool),
     /// Open/Save dialog: files were opened (double click, Enter): they are the answer.
@@ -7041,6 +7043,7 @@ impl Render for FolderView {
                     return;
                 }
                 this.selected.clear();
+                cx.emit(FolderEvent::Escape);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &OpenSelected, window, cx| {
