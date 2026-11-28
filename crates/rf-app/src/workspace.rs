@@ -3476,7 +3476,7 @@ impl Workspace {
 
         let cmd = |id: &'static str, icon: L, tip: &'static str, enabled: bool, look: crate::toolbar_layout::Look, cx: &mut Context<Self>, run: fn(&mut Self, &mut Window, &mut Context<Self>)| {
             // (the word is the tooltip's, without its key: "Kes  (Ctrl+X)" is "Kes")
-            let word = look.word_shown(false).then(|| crate::i18n::t(tip).split("  ").next().unwrap_or_default().to_string());
+            let word = look.word_shown(false).then(|| crate::i18n::t_tip(tip).split("  ").next().unwrap_or_default().to_string());
             div()
                 .id(id)
                 .h(px(32.))
@@ -3487,7 +3487,7 @@ impl Workspace {
                 .items_center()
                 .rounded(theme::RADIUS_SM)
                 .text_color(if enabled { p.text } else { p.text_tertiary })
-                .tooltip(move |w, cx| gpui_kit::component::tooltip::Tooltip::new(crate::i18n::t(tip)).build(w, cx))
+                .tooltip(move |w, cx| gpui_kit::component::tooltip::Tooltip::new(crate::i18n::t_tip(tip)).build(w, cx))
                 .when(enabled, |d| {
                     d.hover(|s| s.bg(p.hover))
                         .active(|s| s.bg(p.pressed))
@@ -3497,6 +3497,10 @@ impl Workspace {
                 .children(word.map(|w| div().whitespace_nowrap().child(w)))
         };
         let hidden_shown = self.active_tab().read(cx).filter.show_hidden;
+        let (can_undo, can_redo) = {
+            let (u, r) = crate::undo::next_labels();
+            (u.is_some(), r.is_some())
+        };
         let (ext_shown, dual_on, shelf_on) = (cx.global::<crate::settings::Settings>().show_extensions, self.tabs[self.active].right.is_some(), self.shelf_open);
         let popups_open = self.popups_open(cx);
         let drop = |id: &'static str, icon: L, label: Option<&'static str>, tip: &'static str, enabled: bool, look: crate::toolbar_layout::Look, cx: &mut Context<Self>, which: fn(&Self, &App) -> crate::ctx_menu::BarMenu| {
@@ -3634,8 +3638,9 @@ impl Workspace {
                 }),
                 "refresh" => extra("refresh").then(|| cmd("cb-refresh", L::RotateCw, "Yenile  (F5)", true, look("refresh"), cx, |_, w, cx| w.dispatch_action(Box::new(Refresh), cx)).into_any_element()),
                 // (off unless asked for; issue 258: "keep the Repeat/Undo button visible in the navigation bar")
-                "undo" => extra("undo").then(|| cmd("cb-undo", L::Undo2, "Geri al  (Ctrl+Z)", true, look("undo"), cx, |_, w, cx| w.dispatch_action(Box::new(Undo), cx)).into_any_element()),
-                "redo" => extra("redo").then(|| cmd("cb-redo", L::Redo2, "Yinele  (Ctrl+Y)", true, look("redo"), cx, |_, w, cx| w.dispatch_action(Box::new(Redo), cx)).into_any_element()),
+                // (greyed while there is nothing to undo or redo, as the "..." menu's rows are: issue 414)
+                "undo" => extra("undo").then(|| cmd("cb-undo", L::Undo2, "Geri al  (Ctrl+Z)", can_undo, look("undo"), cx, |_, w, cx| w.dispatch_action(Box::new(Undo), cx)).into_any_element()),
+                "redo" => extra("redo").then(|| cmd("cb-redo", L::Redo2, "Yinele  (Ctrl+Y)", can_redo, look("redo"), cx, |_, w, cx| w.dispatch_action(Box::new(Redo), cx)).into_any_element()),
                 // (off unless asked for; issue 406: the "..." menu's selection commands on the bar)
                 "selectall" => extra("selectall").then(|| {
                     cmd("cb-selectall", L::SquareCheck, "Tümünü seç", in_folder, look("selectall"), cx, |this, _, cx| {
