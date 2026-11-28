@@ -1904,10 +1904,17 @@ impl FolderView {
             cx.notify();
             return;
         }
-        let Some(path) = self.location().path().map(|p| p.to_path_buf()) else {
-            self.loading = false;
-            cx.notify();
-            return;
+        // (a search with no folder, started on Home, has no path but is searched all the same: issue 377)
+        let path = match self.location() {
+            Location::Search { root, .. } => root.clone(),
+            l => match l.path() {
+                Some(p) => p.to_path_buf(),
+                None => {
+                    self.loading = false;
+                    cx.notify();
+                    return;
+                }
+            },
         };
         if !soft {
             self.loading = true;
