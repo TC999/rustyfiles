@@ -2215,5 +2215,8 @@
  "5ee616e9": "De agora em diante, usar a janela do próprio Windows para:",
  "529850df": "Este programa usa a janela Abrir / Salvar do próprio Windows.",
  "d59927ac": "Material dos menus pop-up",
- "338db07f": "Define o fundo dos menus de contexto e das listas suspensas. As cores seguem o tema escolhido."
+ "338db07f": "Define o fundo dos menus de contexto e das listas suspensas. As cores seguem o tema escolhido.",
+ "abbae389": "{n} min atrás",
+ "a5e76f2f": "{n} h atrás",
+ "4f52ae9d": "{n} dias atrás"
 }

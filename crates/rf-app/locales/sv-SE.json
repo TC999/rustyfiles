@@ -2215,5 +2215,8 @@
  "5ee616e9": "Använd hädanefter Windows eget fönster för:",
  "529850df": "Det här programmet får Windows eget Öppna / Spara-fönster.",
  "d59927ac": "Material för snabbmenyer",
- "338db07f": "Anger bakgrunden för snabbmenyer och listrutor. Färgerna följer det valda temat."
+ "338db07f": "Anger bakgrunden för snabbmenyer och listrutor. Färgerna följer det valda temat.",
+ "abbae389": "{n} min sedan",
+ "a5e76f2f": "{n} t sedan",
+ "4f52ae9d": "{n} dagar sedan"
 }

@@ -2215,5 +2215,8 @@
  "5ee616e9": "Désormais, utiliser la fenêtre de Windows pour :",
  "529850df": "Ce programme utilise la fenêtre Ouvrir / Enregistrer de Windows.",
  "d59927ac": "Matériau des menus contextuels",
- "338db07f": "Définit l'arrière-plan des menus contextuels et des listes déroulantes. Les couleurs suivent le thème choisi."
+ "338db07f": "Définit l'arrière-plan des menus contextuels et des listes déroulantes. Les couleurs suivent le thème choisi.",
+ "abbae389": "il y a {n} min",
+ "a5e76f2f": "il y a {n} h",
+ "4f52ae9d": "il y a {n} jours"
 }

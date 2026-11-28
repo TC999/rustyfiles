@@ -2215,5 +2215,8 @@
  "5ee616e9": "A partir d'ara, fes servir la finestra pròpia de Windows per a:",
  "529850df": "Aquest programa obté la finestra Obre / Desa pròpia de Windows.",
  "d59927ac": "Material dels menús emergents",
- "338db07f": "Defineix el fons dels menús contextuals i de les llistes desplegables. Els colors segueixen el tema triat."
+ "338db07f": "Defineix el fons dels menús contextuals i de les llistes desplegables. Els colors segueixen el tema triat.",
+ "abbae389": "fa {n} min",
+ "a5e76f2f": "fa {n} h",
+ "4f52ae9d": "fa {n} dies"
 }

@@ -2215,5 +2215,8 @@
  "5ee616e9": "From now on, use Windows' own window for",
  "529850df": "This program gets Windows' own Open / Save window.",
  "d59927ac": "Popup menu material",
- "338db07f": "Sets the background of context menus and drop-down lists. Colours follow the selected theme."
+ "338db07f": "Sets the background of context menus and drop-down lists. Colours follow the selected theme.",
+ "abbae389": "{n} min ago",
+ "a5e76f2f": "{n} h ago",
+ "4f52ae9d": "{n} d ago"
 }

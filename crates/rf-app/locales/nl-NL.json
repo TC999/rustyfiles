@@ -2215,5 +2215,8 @@
  "5ee616e9": "Voortaan het eigen venster van Windows gebruiken voor:",
  "529850df": "Dit programma krijgt het eigen Openen / Opslaan-venster van Windows.",
  "d59927ac": "Materiaal van pop-upmenu's",
- "338db07f": "Bepaalt de achtergrond van contextmenu's en vervolgkeuzelijsten. De kleuren volgen het gekozen thema."
+ "338db07f": "Bepaalt de achtergrond van contextmenu's en vervolgkeuzelijsten. De kleuren volgen het gekozen thema.",
+ "abbae389": "{n} min geleden",
+ "a5e76f2f": "{n} u geleden",
+ "4f52ae9d": "{n} dagen geleden"
 }

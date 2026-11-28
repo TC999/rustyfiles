@@ -2215,5 +2215,8 @@
  "5ee616e9": "Käytä tästä lähtien Windowsin omaa ikkunaa ohjelmalle:",
  "529850df": "Tämä ohjelma saa Windowsin oman Avaa / Tallenna -ikkunan.",
  "d59927ac": "Ponnahdusvalikoiden materiaali",
- "338db07f": "Määrittää pikavalikoiden ja avattavien luetteloiden taustan. Värit seuraavat valittua teemaa."
+ "338db07f": "Määrittää pikavalikoiden ja avattavien luetteloiden taustan. Värit seuraavat valittua teemaa.",
+ "abbae389": "{n} min sitten",
+ "a5e76f2f": "{n} t sitten",
+ "4f52ae9d": "{n} päivää sitten"
 }

@@ -2215,5 +2215,8 @@
  "5ee616e9": "Mostantól a Windows saját ablakát használja ennél:",
  "529850df": "Ez a program a Windows saját Megnyitás / Mentés ablakát kapja.",
  "d59927ac": "Előugró menük anyaga",
- "338db07f": "A helyi menük és legördülő listák hátterét állítja be. A színek a választott témát követik."
+ "338db07f": "A helyi menük és legördülő listák hátterét állítja be. A színek a választott témát követik.",
+ "abbae389": "{n} perc ezelőtt",
+ "a5e76f2f": "{n} ó ezelőtt",
+ "4f52ae9d": "{n} nap ezelőtt"
 }

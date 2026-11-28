@@ -2215,5 +2215,8 @@
  "5ee616e9": "A partir de ahora, usar la ventana propia de Windows para:",
  "529850df": "Este programa usa la ventana Abrir / Guardar propia de Windows.",
  "d59927ac": "Material de los menús emergentes",
- "338db07f": "Define el fondo de los menús contextuales y las listas desplegables. Los colores siguen el tema elegido."
+ "338db07f": "Define el fondo de los menús contextuales y las listas desplegables. Los colores siguen el tema elegido.",
+ "abbae389": "hace {n} min",
+ "a5e76f2f": "hace {n} h",
+ "4f52ae9d": "hace {n} días"
 }

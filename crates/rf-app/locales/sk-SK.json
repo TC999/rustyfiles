@@ -2215,5 +2215,8 @@
  "5ee616e9": "Odteraz používať vlastné okno Windows pre:",
  "529850df": "Tento program dostáva vlastné okno Windows Otvoriť / Uložiť.",
  "d59927ac": "Materiál kontextových ponúk",
- "338db07f": "Určuje pozadie kontextových ponúk a rozbaľovacích zoznamov. Farby sa riadia zvoleným motívom."
+ "338db07f": "Určuje pozadie kontextových ponúk a rozbaľovacích zoznamov. Farby sa riadia zvoleným motívom.",
+ "abbae389": "pred {n} min",
+ "a5e76f2f": "pred {n} h",
+ "4f52ae9d": "pred {n} dňami"
 }

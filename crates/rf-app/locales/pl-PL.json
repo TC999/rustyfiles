@@ -2215,5 +2215,8 @@
  "5ee616e9": "Od teraz używaj własnego okna systemu Windows dla:",
  "529850df": "Ten program dostaje własne okno Otwórz / Zapisz systemu Windows.",
  "d59927ac": "Materiał menu podręcznych",
- "338db07f": "Określa tło menu kontekstowych i list rozwijanych. Kolory zależą od wybranego motywu."
+ "338db07f": "Określa tło menu kontekstowych i list rozwijanych. Kolory zależą od wybranego motywu.",
+ "abbae389": "{n} min temu",
+ "a5e76f2f": "{n} godz. temu",
+ "4f52ae9d": "{n} dni temu"
 }

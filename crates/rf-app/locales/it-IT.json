@@ -2215,5 +2215,8 @@
  "5ee616e9": "D'ora in poi, usa la finestra di Windows per:",
  "529850df": "Questo programma usa la finestra Apri / Salva di Windows.",
  "d59927ac": "Materiale dei menu a comparsa",
- "338db07f": "Imposta lo sfondo dei menu contestuali e degli elenchi a discesa. I colori seguono il tema scelto."
+ "338db07f": "Imposta lo sfondo dei menu contestuali e degli elenchi a discesa. I colori seguono il tema scelto.",
+ "abbae389": "{n} min fa",
+ "a5e76f2f": "{n} h fa",
+ "4f52ae9d": "{n} giorni fa"
 }

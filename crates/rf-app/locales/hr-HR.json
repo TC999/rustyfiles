@@ -2215,5 +2215,8 @@
  "5ee616e9": "Od sada koristi vlastiti prozor sustava Windows za:",
  "529850df": "Ovaj program dobiva vlastiti prozor sustava Windows za otvaranje / spremanje.",
  "d59927ac": "Materijal skočnih izbornika",
- "338db07f": "Određuje pozadinu kontekstnih izbornika i padajućih popisa. Boje prate odabranu temu."
+ "338db07f": "Određuje pozadinu kontekstnih izbornika i padajućih popisa. Boje prate odabranu temu.",
+ "abbae389": "prije {n} min",
+ "a5e76f2f": "prije {n} h",
+ "4f52ae9d": "prije {n} dana"
 }
