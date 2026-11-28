@@ -4294,6 +4294,10 @@ impl Workspace {
         let no_fill = gpui_kit::hsla(0., 0., 0., 0.);
         let sidebar_scroll = self.side_tree.scroll_handle().clone();
         let sidebar_scrollable = sidebar_scroll.max_offset().y > px(0.);
+        // The Windows look's wide scrollbar with its track and arrows only where Windows itself draws scrollbars always (Settings ›
+        // Accessibility › Visual effects); otherwise the thin one that shows while scrolling, as Explorer's own and our list's (issue
+        // 419: it stood there wide whatever that setting said).
+        let classic_bar = explorer_look && sidebar_scrollable && rf_win::scrollbars::always_shown();
         let header = |t: &'static str| {
             if rail {
                 let d = div().mx_2().my_2().h(px(1.));
@@ -4629,10 +4633,18 @@ impl Workspace {
                     .children(pins_top)
                     .child(col)
                     // the folder tree's sideways bar, while a deep row has the tree moved or able to move (issue 359)
-                    .children((!rail).then(|| self.tree_sideways_bar(if explorer_look && sidebar_scrollable { 20. } else { 0. }, scrollbar_thumb, scrollbar_thumb_hover, cx)).flatten())
+                    .children((!rail).then(|| self.tree_sideways_bar(if classic_bar { 20. } else { 0. }, scrollbar_thumb, scrollbar_thumb_hover, cx)).flatten())
                     // the Windows look's scrollbar, only while there is something to scroll (issue 229: it stood there with nothing to
                     // scroll, a thumb drawn on an empty track)
-                    .when(explorer_look && sidebar_scrollable, |d| d.child(
+                    .when(explorer_look && sidebar_scrollable && !classic_bar, |d| {
+                        d.child(
+                            gpui_kit::component::scroll::Scrollbar::vertical(&sidebar_scroll)
+                                .id(if rail { "sidebar-scrollbar-rail" } else { "sidebar-scrollbar" })
+                                .mode(crate::folder_view::scrollbar_mode())
+                                .viewport_from_layout(),
+                        )
+                    })
+                    .when(classic_bar, |d| d.child(
                         div()
                             .id("sidebar-scrollbar-track")
                             .absolute()
