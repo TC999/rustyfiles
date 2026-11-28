@@ -138,3 +138,7 @@ puzzle
 pause
 play
 list-tree
+square
+arrow-left-right
+columns-2
+inbox

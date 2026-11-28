@@ -898,5 +898,8 @@
 "Pause": "หยุดชั่วคราว",
 "Paused": "หยุดชั่วคราวแล้ว",
 "Drop here to pin": "วางที่นี่เพื่อปักหมุด",
-"No grouping": "ไม่จัดกลุ่ม"
+"No grouping": "ไม่จัดกลุ่ม",
+"Select all": "เลือกทั้งหมด",
+"Select none": "ไม่เลือกเลย",
+"Invert selection": "สลับการเลือก"
 }

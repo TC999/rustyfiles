@@ -442,6 +442,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
         l.onShowInFolder = { [weak self] url in self?.openTab(url.deletingLastPathComponent(), activate: true, selecting: url.lastPathComponent) }
         l.onOpenInNewWindow = { url in AppDelegate.shared.openWindow(at: url) }
         l.onRefresh = pane { $0.refresh(nil) }
+        l.onToggleDualPane = { [weak self] in self?.toggleDualPane(nil) }
+        l.isDualPane = { [weak self] in self?.isDualPane ?? false }
         l.onGoUp = pane { $0.goUp(nil) }
         l.shelfPane.onTransfer = { [weak self] kind, urls in
             guard let self, let dest = l.url, dest.isFileURL, !urls.isEmpty else { return }
@@ -498,6 +500,8 @@ final class BrowserWindowController: NSWindowController, NSWindowDelegate, NSMen
             load(r)
             updateChrome()
         }
+        leftList.updateCommands()
+        rightList.updateCommands()
     }
 
     // MARK: tabs

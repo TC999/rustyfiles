@@ -898,5 +898,8 @@
 "Pause": "השהה",
 "Paused": "מושהה",
 "Drop here to pin": "שחרר כאן כדי להצמיד",
-"No grouping": "ללא קיבוץ"
+"No grouping": "ללא קיבוץ",
+"Select all": "בחר הכל",
+"Select none": "בטל בחירה",
+"Invert selection": "הפוך בחירה"
 }

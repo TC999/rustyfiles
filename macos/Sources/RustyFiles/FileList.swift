@@ -24,6 +24,14 @@ final class CommandBarView: FlippedView {
     let terminal = IconButton(icon: "square-terminal", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Open in Terminal"))
     let hiddenItems = IconButton(icon: "eye", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Show or hide hidden items"))
     let refresh = IconButton(icon: "rotate-cw", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Refresh"))
+    let undo = IconButton(icon: "undo-2", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Undo"))
+    let redo = IconButton(icon: "redo-2", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Redo"))
+    let selectAll = IconButton(icon: "square-check", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Select all"))
+    let selectNone = IconButton(icon: "square", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Select none"))
+    let invertSelection = IconButton(icon: "arrow-left-right", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Invert selection"))
+    let extensions = IconButton(icon: "file-type", size: NSSize(width: 36, height: 32), tooltip: String(localized: "File extensions"))
+    let dualPane = IconButton(icon: "columns-2", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Dual pane"))
+    let shelf = IconButton(icon: "inbox", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Shelf"))
     /// Folds every group or opens them all; only while the folder is shown in groups.
     let groups = IconButton(icon: "chevrons-down-up", size: NSSize(width: 36, height: 32), tooltip: String(localized: "Collapse all groups"))
     var showsGroups = false { didSet { if showsGroups != oldValue { needsLayout = true } } }
@@ -36,7 +44,8 @@ final class CommandBarView: FlippedView {
         new.chevron = true
         sort.chevron = true
         view.chevron = true
-        [new, sepLeft, newFolder, cut, copy, paste, rename, share, delete, properties, terminal, hiddenItems, refresh, groups, filter, sort, view, sepRight, preview]
+        [new, sepLeft, newFolder, cut, copy, paste, rename, share, delete, properties, terminal, hiddenItems, refresh,
+         undo, redo, selectAll, selectNone, invertSelection, extensions, dualPane, shelf, groups, filter, sort, view, sepRight, preview]
             .forEach(addSubview)
     }
 
@@ -101,6 +110,8 @@ final class CommandBarView: FlippedView {
         let left: [(T, IconButton)] = [
             (.newFolder, newFolder), (.cut, cut), (.copy, copy), (.paste, paste), (.rename, rename), (.share, share), (.delete, delete),
             (.properties, properties), (.terminal, terminal), (.hidden, hiddenItems), (.refresh, refresh),
+            (.undo, undo), (.redo, redo), (.selectAll, selectAll), (.selectNone, selectNone), (.invertSelection, invertSelection),
+            (.extensions, extensions), (.dualPane, dualPane), (.shelf, shelf),
         ]
         for (k, b) in left where shows(k) {
             guard x + 36 <= r - 8 else { break }

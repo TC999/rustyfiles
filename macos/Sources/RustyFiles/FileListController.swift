@@ -268,7 +268,15 @@ final class FileListController: NSObject, NSTableViewDataSource, NSTableViewDele
         card.applyBackground()
         NotificationCenter.default.addObserver(self, selector: #selector(columnsChanged), name: NSTableView.columnDidResizeNotification, object: table)
         wireCommandBar()
+        // the Undo and Redo buttons follow what there is to undo; File extensions its setting
+        let um = FileUndo.shared.manager
+        for name in [Notification.Name.NSUndoManagerDidCloseUndoGroup, .NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+            NotificationCenter.default.addObserver(self, selector: #selector(commandsMayChange), name: name, object: um)
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(commandsMayChange), name: .rfSettingsChanged, object: nil)
     }
+
+    @objc private func commandsMayChange() { updateCommands() }
 
     // MARK: layout
 
@@ -330,6 +338,7 @@ final class FileListController: NSObject, NSTableViewDataSource, NSTableViewDele
             guard shelfShown != oldValue else { return }
             if shelfShown { ShelfStore.prune() }
             card.needsLayout = true
+            updateCommands()
         }
     }
     private let previewHandle = PreviewResizeHandle()
@@ -600,6 +609,24 @@ final class FileListController: NSObject, NSTableViewDataSource, NSTableViewDele
                 tiles.scrollToItems(at: [gridPath(first)], scrollPosition: .nearestHorizontalEdge)
             }
         }
+    }
+
+    // MARK: the command bar's selection buttons (Windows issue 403)
+
+    func selectAllItems() {
+        selectRows(IndexSet(integersIn: 0..<Int(folder?.count() ?? 0)), scrollToFirst: false)
+        selectionChanged()
+    }
+
+    func selectNoItems() {
+        selectRows([], scrollToFirst: false)
+        selectionChanged()
+    }
+
+    func invertSelection() {
+        let all = IndexSet(integersIn: 0..<Int(folder?.count() ?? 0))
+        selectRows(all.subtracting(selectedRows), scrollToFirst: false)
+        selectionChanged()
     }
 
     private func reloadItems() {
@@ -949,6 +976,18 @@ final class FileListController: NSObject, NSTableViewDataSource, NSTableViewDele
         commandBar.properties.isEnabled = writable
         commandBar.preview.isEnabled = !pageShown
         commandBar.preview.isOn = previewShown
+        let um = FileUndo.shared.manager
+        commandBar.undo.isEnabled = um.canUndo
+        commandBar.undo.toolTip = um.canUndo ? um.undoMenuItemTitle : String(localized: "Undo")
+        commandBar.redo.isEnabled = um.canRedo
+        commandBar.redo.toolTip = um.canRedo ? um.redoMenuItemTitle : String(localized: "Redo")
+        let rows = Int(folder?.count() ?? 0)
+        commandBar.selectAll.isEnabled = !pageShown && rows > 0 && selectedRows.count < rows
+        commandBar.selectNone.isEnabled = !pageShown && !selectedRows.isEmpty
+        commandBar.invertSelection.isEnabled = !pageShown && rows > 0
+        commandBar.extensions.isOn = AppSettings.showExtensions
+        commandBar.dualPane.isOn = isDualPane?() ?? false
+        commandBar.shelf.isOn = shelfShown
         commandBar.view.icon = viewMode == .details ? "list" : "layout-grid"
         commandBar.showsGroups = groupsApply && !pageShown && !groupCounts.isEmpty
         let folded = allGroupsFolded
@@ -964,6 +1003,14 @@ final class FileListController: NSObject, NSTableViewDataSource, NSTableViewDele
         b.terminal.action = { [weak self] _ in if let u = self?.url { MenuActions.openInTerminal(u) } }
         b.hiddenItems.action = { _ in AppSettings.showHidden.toggle() }
         b.refresh.action = { [weak self] _ in self?.onRefresh?() }
+        b.undo.action = { _ in FileUndo.shared.manager.undo() }
+        b.redo.action = { _ in FileUndo.shared.manager.redo() }
+        b.selectAll.action = { [weak self] _ in self?.selectAllItems() }
+        b.selectNone.action = { [weak self] _ in self?.selectNoItems() }
+        b.invertSelection.action = { [weak self] _ in self?.invertSelection() }
+        b.extensions.action = { _ in AppSettings.showExtensions.toggle() }
+        b.dualPane.action = { [weak self] _ in self?.onToggleDualPane?() }
+        b.shelf.action = { [weak self] _ in self?.shelfShown.toggle() }
         b.groups.action = { [weak self] _ in self?.toggleAllGroups() }
         b.new.action = { [weak self] btn in
             if self?.commandBar.trashMode == true { return self?.emptyTrash() ?? () }
@@ -1553,6 +1600,9 @@ final class FileListController: NSObject, NSTableViewDataSource, NSTableViewDele
     }
     var onOpenInNewWindow: ((URL) -> Void)?
     var onRefresh: (() -> Void)?
+    /// The command bar's dual pane button: the window splits or joins, and says whether it is split.
+    var onToggleDualPane: (() -> Void)?
+    var isDualPane: (() -> Bool)?
 
     /// The menu of an item in a side column of the Columns view: open it, here or in a new tab,
     /// show it in its folder, copy it or its path, put it in the Trash, its properties.

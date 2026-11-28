@@ -898,5 +898,8 @@
 "Pause": "Pause",
 "Paused": "En pause",
 "Drop here to pin": "Déposer ici pour épingler",
-"No grouping": "Aucun regroupement"
+"No grouping": "Aucun regroupement",
+"Select all": "Tout sélectionner",
+"Select none": "Ne rien sélectionner",
+"Invert selection": "Inverser la sélection"
 }

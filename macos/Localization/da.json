@@ -898,5 +898,8 @@
 "Pause": "Pause",
 "Paused": "Sat på pause",
 "Drop here to pin": "Slip her for at fastgøre",
-"No grouping": "Ingen gruppering"
+"No grouping": "Ingen gruppering",
+"Select all": "Vælg alle",
+"Select none": "Fravælg alle",
+"Invert selection": "Invertér valg"
 }

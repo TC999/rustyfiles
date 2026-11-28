@@ -898,5 +898,8 @@
 "Pause": "إيقاف مؤقت",
 "Paused": "متوقف مؤقتًا",
 "Drop here to pin": "أفلت هنا للتثبيت",
-"No grouping": "بلا تجميع"
+"No grouping": "بلا تجميع",
+"Select all": "تحديد الكل",
+"Select none": "إلغاء التحديد",
+"Invert selection": "إعكس التحديد"
 }

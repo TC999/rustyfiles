@@ -898,5 +898,8 @@
 "Pause": "I-pause",
 "Paused": "Naka-pause",
 "Drop here to pin": "I-drop dito para i-pin",
-"No grouping": "Walang pagpapangkat"
+"No grouping": "Walang pagpapangkat",
+"Select all": "Piliin lahat",
+"Select none": "Walang piliin",
+"Invert selection": "Baligtarin ang pagpili"
 }

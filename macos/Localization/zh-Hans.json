@@ -898,5 +898,8 @@
 "Pause": "暂停",
 "Paused": "已暂停",
 "Drop here to pin": "拖放到此处以固定",
-"No grouping": "不分组"
+"No grouping": "不分组",
+"Select all": "全部选择",
+"Select none": "全部取消选择",
+"Invert selection": "反选"
 }

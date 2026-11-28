@@ -898,5 +898,8 @@
 "Pause": "Keskeytä",
 "Paused": "Keskeytetty",
 "Drop here to pin": "Kiinnitä pudottamalla tähän",
-"No grouping": "Ei ryhmittelyä"
+"No grouping": "Ei ryhmittelyä",
+"Select all": "Valitse kaikki",
+"Select none": "Poista valinnat",
+"Invert selection": "Käännä valinta"
 }

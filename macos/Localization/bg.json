@@ -898,5 +898,8 @@
 "Pause": "Пауза",
 "Paused": "На пауза",
 "Drop here to pin": "Пуснете тук за закачане",
-"No grouping": "Без групиране"
+"No grouping": "Без групиране",
+"Select all": "Избиране на всичко",
+"Select none": "Без избор",
+"Invert selection": "Обръщане на избора"
 }

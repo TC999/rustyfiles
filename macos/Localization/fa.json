@@ -898,5 +898,8 @@
 "Pause": "مکث",
 "Paused": "متوقف شد",
 "Drop here to pin": "برای سنجاق کردن اینجا رها کنید",
-"No grouping": "بدون گروه‌بندی"
+"No grouping": "بدون گروه‌بندی",
+"Select all": "انتخاب همه",
+"Select none": "لغو انتخاب همه",
+"Invert selection": "معکوس کردن انتخاب"
 }

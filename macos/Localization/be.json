@@ -898,5 +898,8 @@
 "Pause": "Прыпыніць",
 "Paused": "Прыпынена",
 "Drop here to pin": "Перацягніце сюды, каб замацаваць",
-"No grouping": "Без групавання"
+"No grouping": "Без групавання",
+"Select all": "Выбраць усё",
+"Select none": "Зняць выбар",
+"Invert selection": "Інвертаваць выбранае"
 }

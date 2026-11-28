@@ -898,5 +898,8 @@
 "Pause": "Posa en pausa",
 "Paused": "En pausa",
 "Drop here to pin": "Deixa-ho anar aquí per fixar",
-"No grouping": "Sense agrupar"
+"No grouping": "Sense agrupar",
+"Select all": "Selecciona-ho tot",
+"Select none": "No en seleccionis cap",
+"Invert selection": "Inverteix la selecció"
 }

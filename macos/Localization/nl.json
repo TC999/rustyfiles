@@ -898,5 +898,8 @@
 "Pause": "Onderbreken",
 "Paused": "Gepauzeerd",
 "Drop here to pin": "Hier neerzetten om vast te maken",
-"No grouping": "Geen groepering"
+"No grouping": "Geen groepering",
+"Select all": "Alles selecteren",
+"Select none": "Selectie opheffen",
+"Invert selection": "Selectie omkeren"
 }

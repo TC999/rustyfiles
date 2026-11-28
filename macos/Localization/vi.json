@@ -898,5 +898,8 @@
 "Pause": "Tạm dừng",
 "Paused": "Đã tạm dừng",
 "Drop here to pin": "Thả vào đây để ghim",
-"No grouping": "Không nhóm"
+"No grouping": "Không nhóm",
+"Select all": "Chọn tất cả",
+"Select none": "Bỏ chọn tất cả",
+"Invert selection": "Đảo lựa chọn"
 }

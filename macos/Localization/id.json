@@ -898,5 +898,8 @@
 "Pause": "Jeda",
 "Paused": "Dijeda",
 "Drop here to pin": "Letakkan di sini untuk menyematkan",
-"No grouping": "Tanpa pengelompokan"
+"No grouping": "Tanpa pengelompokan",
+"Select all": "Pilih semua",
+"Select none": "Batalkan pilihan",
+"Invert selection": "Balikkan pilihan"
 }

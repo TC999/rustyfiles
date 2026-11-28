@@ -898,5 +898,8 @@
 "Pause": "रोकें",
 "Paused": "रोका गया",
 "Drop here to pin": "पिन करने के लिए यहाँ छोड़ें",
-"No grouping": "कोई समूहीकरण नहीं"
+"No grouping": "कोई समूहीकरण नहीं",
+"Select all": "सभी चुनें",
+"Select none": "कुछ नहीं चुनें",
+"Invert selection": "उलट चयन"
 }
