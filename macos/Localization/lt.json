@@ -898,5 +898,8 @@
 "Pause": "Pristabdyti",
 "Paused": "Pristabdyta",
 "Drop here to pin": "Nuleiskite čia, kad prisegtumėte",
-"No grouping": "Negrupuoti"
+"No grouping": "Negrupuoti",
+"Select all": "Pažymėti viską",
+"Select none": "Nepasirinkti nieko",
+"Invert selection": "Invertuoti pasirinkimą"
 }

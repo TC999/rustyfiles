@@ -337,6 +337,8 @@ pub enum FolderEvent {
     OpenInNewWindow(Location),
     /// Space / Esc: open or close Quick Look for the focused item.
     QuickLook,
+    /// Escape with nothing of the list's own to undo (no rename, no DirectLook): an Open / Save dialog closes on it (issue 389).
+    Escape,
     /// Browsing into a protected archive: (archive, the given password was wrong).
     NeedPassword(PathBuf, bool),
     /// Open/Save dialog: files were opened (double click, Enter): they are the answer.
@@ -1905,10 +1907,17 @@ impl FolderView {
             cx.notify();
             return;
         }
-        let Some(path) = self.location().path().map(|p| p.to_path_buf()) else {
-            self.loading = false;
-            cx.notify();
-            return;
+        // (a search with no folder, started on Home, has no path but is searched all the same: issue 377)
+        let path = match self.location() {
+            Location::Search { root, .. } => root.clone(),
+            l => match l.path() {
+                Some(p) => p.to_path_buf(),
+                None => {
+                    self.loading = false;
+                    cx.notify();
+                    return;
+                }
+            },
         };
         if !soft {
             self.loading = true;
@@ -1999,6 +2008,22 @@ impl FolderView {
                     let mut found = 0usize;
                     let t_index = std::time::Instant::now();
                     let _ = tx.unbounded_send(Msg::Stage(SearchStage::Index));
+                    // No folder (a search started on Home, issue 377): every drive our name index covers, and only that (there is no
+                    // folder to ask Windows' search about or to walk).
+                    if root.as_os_str().is_empty() {
+                        let mut paths = Vec::new();
+                        for (drive, state, _, _) in rf_win::indexer::status() {
+                            if state == rf_win::indexer::State::Ready
+                                && let Some(found) = rf_win::indexer::search(&own, &drive, include_hidden, 50_000usize.saturating_sub(paths.len()))
+                            {
+                                paths.extend(found);
+                            }
+                        }
+                        let n = send_index_hits(&paths, &tx, &cancel);
+                        log::info!("search: \"{query}\" on every indexed drive: {n} hits in {:?}", t_index.elapsed());
+                        let _ = tx.unbounded_send(Msg::Done(Ok(n)));
+                        return;
+                    }
                     // (Windows Search gave up on: the walk keeps saying so)
                     let mut windows_silent = false;
                     if let Some(paths) = rf_win::indexer::search(&own, &root, include_hidden, 50_000) {
@@ -7019,6 +7044,7 @@ impl Render for FolderView {
                     return;
                 }
                 this.selected.clear();
+                cx.emit(FolderEvent::Escape);
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &OpenSelected, window, cx| {

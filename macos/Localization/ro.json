@@ -898,5 +898,8 @@
 "Pause": "Pauză",
 "Paused": "Întrerupt",
 "Drop here to pin": "Plasați aici pentru a fixa",
-"No grouping": "Fără grupare"
+"No grouping": "Fără grupare",
+"Select all": "Selectați tot",
+"Select none": "Deselectare tot",
+"Invert selection": "Inversare selecție"
 }

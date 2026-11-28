@@ -898,5 +898,8 @@
 "Pause": "Pauziraj",
 "Paused": "Pauzirano",
 "Drop here to pin": "Ispusti ovdje za prikvačivanje",
-"No grouping": "Bez grupiranja"
+"No grouping": "Bez grupiranja",
+"Select all": "Odaberi sve",
+"Select none": "Poništi odabir",
+"Invert selection": "Preokreni odabir"
 }

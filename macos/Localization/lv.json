@@ -898,5 +898,8 @@
 "Pause": "Pauzēt",
 "Paused": "Pauzēts",
 "Drop here to pin": "Nometiet šeit, lai piespraustu",
-"No grouping": "Negrupēt"
+"No grouping": "Negrupēt",
+"Select all": "Atlasīt visu",
+"Select none": "Neatlasīt neko",
+"Invert selection": "Apvērst atlasi"
 }

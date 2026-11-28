@@ -169,8 +169,12 @@ pub fn get_image(path: &Path, size: u32, kind: Kind) -> anyhow::Result<Bgra> {
     let w = wide(path);
     let factory: IShellItemImageFactory = unsafe { SHCreateItemFromParsingName(PCWSTR(w.as_ptr()), None)? };
     let sz = SIZE { cx: size as i32, cy: size as i32 };
+    // An icon asked at a size it has no image for (53, 105 px: a tile at 175 %) is stretched by the shell itself, with a dark rim
+    // around its edges; it is asked at the next size icons are drawn at and brought down here with a proper filter (issue 253).
+    let icon_px = icon_step(size);
+    let icon_sz = SIZE { cx: icon_px as i32, cy: icon_px as i32 };
     let hbmp = match kind {
-        Kind::Icon => unsafe { factory.GetImage(sz, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK)? },
+        Kind::Icon => unsafe { factory.GetImage(icon_sz, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK)? },
         Kind::Thumbnail => unsafe {
             factory
                 .GetImage(sz, SIIGBF(SIIGBF_THUMBNAILONLY.0 | SIIGBF_RESIZETOFIT.0 | SIIGBF_BIGGERSIZEOK.0))
@@ -181,6 +185,9 @@ pub fn get_image(path: &Path, size: u32, kind: Kind) -> anyhow::Result<Bgra> {
     let r = hbitmap_to_bgra(hbmp);
     unsafe {
         let _ = DeleteObject(HGDIOBJ(hbmp.0));
+    }
+    if matches!(kind, Kind::Icon) {
+        return r.map(|b| fit_to(b, size));
     }
     // A folder's preview is the folder drawn with its first pictures in it, on a transparent ground. For some folders (a hidden one,
     // some with programs' pictures in them) the shell hands it over with no alpha at all, and it came out as a black square with the
@@ -197,6 +204,14 @@ pub fn get_image(path: &Path, size: u32, kind: Kind) -> anyhow::Result<Bgra> {
         return r;
     }
     r
+}
+
+/// The sizes icons come in (Windows' image lists and the usual .ico sizes): an icon asked at another size is asked at the next one up.
+const ICON_STEPS: [u32; 10] = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256];
+
+/// The icon size to ask the shell for, for a picture `size` px big.
+fn icon_step(size: u32) -> u32 {
+    ICON_STEPS.iter().copied().find(|&s| s >= size).unwrap_or(size)
 }
 
 /// How many pixels of a picture are kept (its longer side), for a request of `size` that may name its box (`fit`).
@@ -514,6 +529,16 @@ impl ThumbPool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_icon_is_asked_at_the_next_size_it_comes_in() {
+        use super::icon_step;
+        assert_eq!(icon_step(32), 32);
+        assert_eq!(icon_step(53), 64);
+        assert_eq!(icon_step(105), 128);
+        assert_eq!(icon_step(168), 256);
+        assert_eq!(icon_step(300), 300, "bigger than any step: as asked");
+    }
+
     /// What is kept of a picture: its box's pixels when the request names them, three times the asked size otherwise.
     #[test]
     fn a_videos_first_thumbnail_does_not_stay_at_the_frames_size() {

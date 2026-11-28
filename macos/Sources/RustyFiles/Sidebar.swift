@@ -24,6 +24,14 @@ final class SidebarView: FlippedView {
         /// A drive: how full it is (0…1) and "used / total", for its bar.
         var used: Double? = nil
         var space: String? = nil
+        /// A drive that can be ejected: an eject button at the end of its row (Windows issue 406).
+        var ejectable = false
+    }
+
+    /// A USB stick, a disc, a disk image, a server: what macOS can eject.
+    static func isEjectable(_ url: URL) -> Bool {
+        let v = try? url.resourceValues(forKeys: [.volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsLocalKey, .volumeIsInternalKey])
+        return v?.volumeIsEjectable == true || v?.volumeIsRemovable == true || v?.volumeIsLocal == false || v?.volumeIsInternal == false
     }
 
     /// The folder tree's open folders (paths), kept across starts.
@@ -209,6 +217,7 @@ final class SidebarView: FlippedView {
                     item.used = Double(used) / Double(total)
                     item.space = "\(formatSize(bytes: UInt64(used))) / \(formatSize(bytes: UInt64(total)))"
                 }
+                item.ejectable = Self.isEjectable(v)
                 items.append(item)
             }
         }
@@ -431,6 +440,12 @@ final class SidebarListView: HoverView {
                 Draw.text(item.title, in: NSRect(x: r.minX + 8, y: r.minY + 12, width: r.width - 16, height: 16), font: Metrics.textXsSemibold, color: p.textTertiary)
                 continue
             }
+            // a pin being moved: a line where it will go (after the target moving down, before it moving up)
+            if let to = pinTarget, to == i, let from = pinPress?.index, from != to {
+                let y = from < to ? r.maxY - 1 : r.minY - 1
+                p.accent.setFill()
+                NSBezierPath(roundedRect: NSRect(x: r.minX + 4, y: y, width: r.width - 8, height: 2), xRadius: 1, yRadius: 1).fill()
+            }
             // the selected item stands on the lens: no fill, no pill
             let isSelected = item.url.map { SidebarView.norm($0) == selected } ?? false
             if dropIndex == i {
@@ -469,9 +484,15 @@ final class SidebarListView: HoverView {
             } else {
                 Draw.icon(item.icon, in: NSRect(x: r.minX + 8, y: r.minY, width: 16, height: r.height), size: 16, color: iconColor)
             }
+            // (an ejectable drive's name and bar make room for its eject button)
+            let ejectW: CGFloat = item.ejectable ? 22 : 0
+            if item.ejectable {
+                let hotEject = hoverPoint.map { ejectRect(i).contains($0) } ?? false
+                Draw.icon("eject", in: ejectRect(i), size: 14, color: hotEject ? p.text : p.textTertiary)
+            }
             if let used = item.used {
                 // the name, a 2 px bar 5 under it, the numbers 2 under that (workspace.rs sidebar drives)
-                let x = r.minX + 8 + 16 + 8, w = r.width - 40
+                let x = r.minX + 8 + 16 + 8, w = r.width - 40 - ejectW
                 Draw.text(item.title, in: NSRect(x: x, y: r.minY + 6, width: w, height: 20), font: Metrics.textSm, color: p.text)
                 let bar = NSRect(x: x, y: r.minY + 6 + 20 + 3, width: w, height: 2)
                 Draw.roundedRect(bar, radius: 1, fill: p.pressed)
@@ -481,8 +502,15 @@ final class SidebarListView: HoverView {
                 }
                 continue
             }
-            Draw.text(item.title, in: NSRect(x: r.minX + 8 + 16 + 8, y: r.minY, width: r.width - 40, height: r.height), font: Metrics.textSm, color: p.text)
+            Draw.text(item.title, in: NSRect(x: r.minX + 8 + 16 + 8, y: r.minY, width: r.width - 40 - ejectW, height: r.height), font: Metrics.textSm, color: p.text)
         }
+    }
+
+    /// Where an ejectable drive's eject button is: at the end of its row, centred on the name.
+    private func ejectRect(_ i: Int) -> NSRect {
+        let r = rects()[i]
+        let midY = items[i].used != nil ? r.minY + 6 + 10 : r.midY
+        return NSRect(x: r.maxX - 8 - 16, y: midY - 8, width: 16, height: 16)
     }
 
     /// A middle click on a place opens it in a new tab (issue 325).
@@ -491,9 +519,42 @@ final class SidebarListView: HoverView {
         owner?.onOpenInNewTab?(url)
     }
 
+    // MARK: pinned folders reordered by dragging one onto another (workspace.rs `move_pin`)
+
+    /// Where the pointer went down on a pinned folder, and the pin it is over once it moved.
+    private var pinPress: (index: Int, at: NSPoint)?
+    override var mouseDownCanMoveWindow: Bool { false }
+    private var pinTarget: Int? { didSet { if pinTarget != oldValue { needsDisplay = true } } }
+
+    override func mouseDown(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        pinPress = index(at: p).flatMap { items[$0].kind == .pinned ? ($0, p) : nil }
+        pinTarget = nil
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let press = pinPress else { return }
+        let p = convert(event.locationInWindow, from: nil)
+        guard pinTarget != nil || hypot(p.x - press.at.x, p.y - press.at.y) > 4 else { return }
+        autoscroll(with: event)
+        // the nearest pin up or down the list, so the ends are easy to reach
+        let pins = items.indices.filter { items[$0].kind == .pinned }
+        let r = rects()
+        pinTarget = pins.min { abs(r[$0].midY - p.y) < abs(r[$1].midY - p.y) } ?? press.index
+    }
+
     override func mouseUp(with event: NSEvent) {
+        defer { pinPress = nil; pinTarget = nil }
+        if let press = pinPress, let to = pinTarget {
+            if to != press.index, let from = items[press.index].url, let onto = items[to].url { Pins.move(from, onto: onto) }
+            return
+        }
         let p = convert(event.locationInWindow, from: nil)
         guard let i = index(at: p) else { return }
+        if items[i].ejectable, let url = items[i].url, ejectRect(i).insetBy(dx: -4, dy: -4).contains(p) {
+            owner?.onEject?(url)
+            return
+        }
         // the tree's chevron opens and closes; the rest of the row goes there
         if items[i].kind == .tree, items[i].expandable, chevronRect(i).insetBy(dx: -4, dy: -6).contains(p) {
             owner?.toggle(items[i])
@@ -523,10 +584,7 @@ final class SidebarListView: HoverView {
             b.add(String(localized: "Hide this place"), "eye-off") { AppSettings.hiddenPlaces.append(url.standardizedFileURL.path) }
         }
         if item.kind == .drive {
-            let values = try? url.resourceValues(forKeys: [.volumeIsEjectableKey, .volumeIsRemovableKey, .volumeIsLocalKey, .volumeIsInternalKey])
-            let ejectable = values?.volumeIsEjectable == true || values?.volumeIsRemovable == true || values?.volumeIsLocal == false
-                || values?.volumeIsInternal == false
-            if ejectable {
+            if item.ejectable {
                 b.separator()
                 b.add(String(localized: "Eject"), "eject") { owner.onEject?(url) }
             }
@@ -551,6 +609,17 @@ enum Pins {
 
     static func save(_ urls: [URL]) {
         UserDefaults.standard.set(urls.map(\.path), forKey: key)
+    }
+
+    /// `from` takes the place of `onto` (by path: the drawn list may be from before).
+    static func move(_ from: URL, onto: URL) {
+        var list = load()
+        guard let a = list.firstIndex(where: { $0.standardizedFileURL == from.standardizedFileURL }),
+            let b = list.firstIndex(where: { $0.standardizedFileURL == onto.standardizedFileURL }), a != b
+        else { return }
+        list.insert(list.remove(at: a), at: b)
+        save(list)
+        NotificationCenter.default.post(name: .rfPinsChanged, object: nil)
     }
 }
 

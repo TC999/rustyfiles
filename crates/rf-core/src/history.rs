@@ -81,7 +81,8 @@ impl Location {
     pub fn path(&self) -> Option<&Path> {
         match self {
             Location::Path(p) => Some(p),
-            Location::Search { root, .. } => Some(root),
+            // (a search with no folder, started on Home, has no folder for commands: issue 377)
+            Location::Search { root, .. } if !root.as_os_str().is_empty() => Some(root),
             _ => None,
         }
     }

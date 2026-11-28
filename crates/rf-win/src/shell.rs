@@ -114,7 +114,7 @@ fn terminal_dir_args(program: &str, dir: &str) -> Vec<String> {
     match program {
         "cmder.exe" => vec!["/START".into(), dir.into()],
         "conemu.exe" | "conemu64.exe" => vec!["-Dir".into(), dir.into()],
-        "wt.exe" | "windowsterminal.exe" => vec!["-d".into(), dir.into()],
+        "wt.exe" | "windowsterminal.exe" => vec!["-d".into(), wt_escaped(dir)],
         "wezterm.exe" | "wezterm-gui.exe" => vec!["start".into(), "--cwd".into(), dir.into()],
         "alacritty.exe" => vec!["--working-directory".into(), dir.into()],
         "pwsh.exe" | "powershell.exe" => vec!["-NoExit".into()],
@@ -135,12 +135,49 @@ pub fn open_terminal(dir: &Path) -> anyhow::Result<()> {
             Err(e) => log::warn!("terminal {chosen}: {e}"),
         }
     }
-    let d = dir.to_string_lossy().to_string();
-    let wt = std::process::Command::new("wt.exe").args(["-d", &d]).spawn();
-    if wt.is_err() {
-        std::process::Command::new("powershell.exe").current_dir(dir).spawn()?;
+    let d = wt_escaped(&dir.to_string_lossy());
+    let wt = match windows_terminal() {
+        Some(wt) => std::process::Command::new(wt).args(["-d", &d]).spawn().is_ok(),
+        None => false,
+    };
+    if !wt {
+        std::process::Command::new(powershell()).current_dir(dir).spawn()?;
     }
     Ok(())
+}
+
+/// Windows Terminal by its full path (the app alias Windows puts in the user's WindowsApps folder), `None` when it is not installed.
+///
+/// The programs are named by their full paths: a bare name is looked for in more places than Windows' own (issue 422).
+fn windows_terminal() -> Option<std::path::PathBuf> {
+    let p = std::path::PathBuf::from(std::env::var_os("LOCALAPPDATA")?).join(r"Microsoft\WindowsApps\wt.exe");
+    // (the alias is a reparse point of its own kind: looked at itself, not followed)
+    std::fs::symlink_metadata(&p).is_ok().then_some(p)
+}
+
+/// Windows PowerShell by its full path in the Windows folder (see [`windows_terminal`] for why).
+fn powershell() -> std::path::PathBuf {
+    let root = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"));
+    root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe")
+}
+
+/// A folder for Windows Terminal's `-d`: Windows Terminal reads `;` as a separator of its own, even inside an argument; `\;` is its
+/// escape for a plain semicolon (issue 422).
+fn wt_escaped(dir: &str) -> String {
+    dir.replace(';', r"\;")
+}
+
+/// A text inside a PowerShell single-quoted string: PowerShell takes the typographic single quotes (‘ ’ ‚ ‛) for quote marks as well
+/// as `'`, so each of them is doubled, as PowerShell escapes any of them (issue 422).
+fn ps_single_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        if matches!(c, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(c);
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Opens an elevated terminal in `dir` (Windows asks for permission: UAC). Windows Terminal if
@@ -163,10 +200,15 @@ pub fn open_terminal_admin(dir: &Path) -> anyhow::Result<()> {
     };
     // ERROR_CANCELLED: the user said no at the prompt (asking again with PowerShell would nag)
     let declined = |e: &windows::core::Error| e.code().0 as u32 == 0x8007_04C7;
-    match run("wt.exe", &terminal_args(dir)) {
+    // (both by their full paths: see `windows_terminal`)
+    let first = match windows_terminal() {
+        Some(wt) => run(&wt.to_string_lossy(), &terminal_args(dir)),
+        None => Err(windows::core::Error::from(windows::Win32::Foundation::ERROR_FILE_NOT_FOUND.to_hresult())),
+    };
+    match first {
         Ok(()) => Ok(()),
         Err(e) if declined(&e) => Ok(()),
-        Err(_) => match run("powershell.exe", &powershell_args(dir)) {
+        Err(_) => match run(&powershell().to_string_lossy(), &powershell_args(dir)) {
             Ok(()) => Ok(()),
             Err(e) if declined(&e) => Ok(()),
             Err(e) => Err(e.into()),
@@ -177,7 +219,7 @@ pub fn open_terminal_admin(dir: &Path) -> anyhow::Result<()> {
 /// `-d "C:\some dir"` for Windows Terminal. A trailing backslash would escape the closing
 /// quote (`"C:\"`), so it is doubled.
 fn terminal_args(dir: &Path) -> String {
-    let d = dir.to_string_lossy();
+    let d = wt_escaped(&dir.to_string_lossy());
     let tail = if d.ends_with('\\') { "\\" } else { "" };
     format!("-d \"{d}{tail}\"")
 }
@@ -185,7 +227,7 @@ fn terminal_args(dir: &Path) -> String {
 /// An elevated process starts in System32 whatever directory is asked for: PowerShell is told
 /// to go to the folder itself (single quotes doubled, as PowerShell escapes them).
 fn powershell_args(dir: &Path) -> String {
-    format!("-NoExit -Command \"Set-Location -LiteralPath '{}'\"", dir.to_string_lossy().replace('\'', "''"))
+    format!("-NoExit -Command \"Set-Location -LiteralPath '{}'\"", ps_single_quoted(&dir.to_string_lossy()))
 }
 
 /// `shell:Downloads`, `shell:startup`, `shell:sendto`… → file-system path (None for virtual
@@ -255,6 +297,22 @@ mod tests {
         // a drive root: the backslash must not escape the closing quote
         assert_eq!(super::terminal_args(Path::new(r"D:\")), r#"-d "D:\\""#);
         assert_eq!(super::powershell_args(Path::new(r"C:\it's")), r#"-NoExit -Command "Set-Location -LiteralPath 'C:\it''s'""#);
+    }
+
+    /// Issue 422: a folder's name stays one folder name in the terminal's arguments.
+    #[test]
+    fn a_folder_name_stays_a_folder_name_in_the_elevated_terminal() {
+        // PowerShell's typographic single quotes are doubled like the plain one
+        let ps = super::powershell_args(Path::new("C:\\x\u{2019}y\u{2018}"));
+        assert_eq!(ps, "-NoExit -Command \"Set-Location -LiteralPath 'C:\\x\u{2019}\u{2019}y\u{2018}\u{2018}'\"");
+        for q in ['\u{201A}', '\u{201B}'] {
+            assert_eq!(super::ps_single_quoted(&q.to_string()), format!("{q}{q}"));
+        }
+        // Windows Terminal's separator is escaped
+        assert_eq!(super::terminal_args(Path::new(r"C:\a;b")), r#"-d "C:\a\;b""#);
+        // and the programs are named by their full paths
+        assert!(super::powershell().is_absolute());
+        assert!(super::powershell().ends_with(r"WindowsPowerShell\v1.0\powershell.exe"));
     }
 }
 

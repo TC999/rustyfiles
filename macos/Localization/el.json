@@ -898,5 +898,8 @@
 "Pause": "Παύση",
 "Paused": "Σε παύση",
 "Drop here to pin": "Αποθέστε εδώ για καρφίτσωμα",
-"No grouping": "Χωρίς ομαδοποίηση"
+"No grouping": "Χωρίς ομαδοποίηση",
+"Select all": "Επιλογή όλων",
+"Select none": "Καμία επιλογή",
+"Invert selection": "Αναστροφή επιλογής"
 }

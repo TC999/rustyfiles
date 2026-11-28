@@ -898,5 +898,8 @@
 "Pause": "Pozastavit",
 "Paused": "Pozastaveno",
 "Drop here to pin": "Přetažením sem připnete",
-"No grouping": "Bez seskupení"
+"No grouping": "Bez seskupení",
+"Select all": "Vybrat vše",
+"Select none": "Zrušit výběr",
+"Invert selection": "Invertovat výběr"
 }

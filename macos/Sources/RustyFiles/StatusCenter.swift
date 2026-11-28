@@ -174,29 +174,89 @@ final class StatusCenterView: FlippedView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
 
+    /// A spring's overshoot, as the Windows notifications panel moves (dock grow_host.rs).
+    private static let spring = CAMediaTimingFunction(controlPoints: 0.34, 1.4, 0.64, 1)
+
     @objc func reload() {
         let cards = StatusCenter.shared.cards
-        if rows.map(\.card.id) != cards.map(\.id) {
-            rows.forEach { $0.removeFromSuperview() }
-            rows = cards.map { StatusCardView($0) }
-            rows.forEach(addSubview)
+        let ids = cards.map(\.id)
+        let animate = AppSettings.animations && window?.isVisible == true
+        var leaving: [StatusCardView] = []
+        if rows.map(\.card.id) != ids {
+            // the cards that stay keep their views, so they can move rather than reappear
+            var kept: [UUID: StatusCardView] = [:]
+            for r in rows { kept[r.card.id] = r }
+            leaving = rows.filter { !ids.contains($0.card.id) }
+            rows = cards.map { c in
+                if let r = kept[c.id] { return r }
+                let r = StatusCardView(c)
+                if animate { r.alphaValue = 0 }
+                addSubview(r)
+                return r
+            }
+            // a new card appears in its place (it fades in there)
+            for (r, f) in zip(rows, frames()) where r.alphaValue == 0 { r.frame = f }
         }
         rows.forEach { $0.needsDisplay = true; $0.needsLayout = true }
         clear.isHidden = !cards.contains { $0.state != .running }
-        let h = max(CGFloat(rows.count) * 86 + 16 + 40, 120)
-        setFrameSize(NSSize(width: 360, height: min(h, 520)))
-        onResize?(frame.size)
-        needsLayout = true
+        guard animate, !leaving.isEmpty || rows.contains(where: { $0.alphaValue < 1 }) else {
+            leaving.forEach { $0.removeFromSuperview() }
+            return resize(animated: false)
+        }
+        // removed cards leave one by one, sliding aside; then the rest close up on a spring
+        for (k, r) in leaving.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05 * Double(k)) {
+                NSAnimationContext.runAnimationGroup { c in
+                    c.duration = 0.16
+                    r.animator().alphaValue = 0
+                    r.animator().setFrameOrigin(NSPoint(x: r.frame.minX + 28, y: r.frame.minY))
+                } completionHandler: {
+                    MainActor.assumeIsolated { r.removeFromSuperview() }
+                }
+            }
+        }
+        let wait = leaving.isEmpty ? 0 : 0.05 * Double(leaving.count - 1) + 0.16
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in self?.resize(animated: true) }
+    }
+
+    /// While the cards move, layout leaves them where the animation has them.
+    private var animating = false
+
+    private func height() -> CGFloat { min(max(CGFloat(rows.count) * 86 + 16 + 40, 120), 520) }
+
+    private func resize(animated: Bool) {
+        let size = NSSize(width: 360, height: height())
+        guard animated else {
+            setFrameSize(size)
+            onResize?(size)
+            needsLayout = true
+            needsDisplay = true
+            return
+        }
+        animating = true
+        NSAnimationContext.runAnimationGroup { c in
+            c.duration = 0.38
+            c.timingFunction = Self.spring
+            c.allowsImplicitAnimation = true
+            onResize?(size)
+            setFrameSize(size)
+            for (r, f) in zip(rows, frames()) {
+                r.animator().frame = f
+                r.animator().alphaValue = 1
+            }
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated { self?.animating = false }
+        }
         needsDisplay = true
+    }
+
+    private func frames() -> [NSRect] {
+        rows.indices.map { NSRect(x: 12, y: 40 + CGFloat($0) * 86, width: bounds.width - 24, height: 78) }
     }
 
     override func layout() {
         super.layout()
-        var y: CGFloat = 40
-        for r in rows {
-            r.frame = NSRect(x: 12, y: y, width: bounds.width - 24, height: 78)
-            y += 86
-        }
+        if !animating { for (r, f) in zip(rows, frames()) { r.frame = f } }
         let cw = clear.intrinsicContentSize.width
         clear.frame = NSRect(x: bounds.width - 12 - cw, y: 10, width: cw, height: 24)
     }

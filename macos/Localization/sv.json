@@ -898,5 +898,8 @@
 "Pause": "Pausa",
 "Paused": "Pausad",
 "Drop here to pin": "Släpp här för att fästa",
-"No grouping": "Ingen gruppering"
+"No grouping": "Ingen gruppering",
+"Select all": "Välj alla",
+"Select none": "Avmarkera alla",
+"Invert selection": "Omvänd markering"
 }

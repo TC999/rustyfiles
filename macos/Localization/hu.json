@@ -898,5 +898,8 @@
 "Pause": "Szünet",
 "Paused": "Szüneteltetve",
 "Drop here to pin": "Ejtse ide a rögzítéshez",
-"No grouping": "Nincs csoportosítás"
+"No grouping": "Nincs csoportosítás",
+"Select all": "Összes kijelölése",
+"Select none": "Kijelölés megszüntetése",
+"Invert selection": "Kijelölés megfordítása"
 }

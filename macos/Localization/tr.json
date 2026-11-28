@@ -899,5 +899,8 @@
 "Paused": "Duraklatıldı",
 "Resume": "Devam et",
 "Drop here to pin": "Sabitlemek için buraya bırakın",
-"No grouping": "Gruplama yok"
+"No grouping": "Gruplama yok",
+"Select all": "Tümünü seç",
+"Select none": "Hiçbirini seçme",
+"Invert selection": "Seçimi tersine çevir"
 }

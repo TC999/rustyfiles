@@ -898,5 +898,8 @@
 "Pause": "一時停止",
 "Paused": "一時停止中",
 "Drop here to pin": "ここにドロップしてピン留め",
-"No grouping": "グループ化なし"
+"No grouping": "グループ化なし",
+"Select all": "すべて選択",
+"Select none": "選択解除",
+"Invert selection": "選択を反転"
 }

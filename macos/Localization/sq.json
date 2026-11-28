@@ -898,5 +898,8 @@
 "Pause": "Pauzë",
 "Paused": "Në pauzë",
 "Drop here to pin": "Lëshoje këtu për ta fiksuar",
-"No grouping": "Pa grupim"
+"No grouping": "Pa grupim",
+"Select all": "Zgjidh të gjitha",
+"Select none": "Mos zgjidh asnjë",
+"Invert selection": "Përkëmbe përzgjedhjen"
 }

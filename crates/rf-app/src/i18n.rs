@@ -346,6 +346,22 @@ pub fn t(tr: &'static str) -> &'static str {
     }
 }
 
+/// [`t`] for a tooltip with its key at the end ("Geri al  (Ctrl+Z)"): a language that has no entry for the whole text gets the
+/// words translated on their own and the key as it is, instead of the Turkish text (issue 415: Undo and Redo's buttons said
+/// "Geri al" in Polish).
+pub fn t_tip(tr: &'static str) -> String {
+    if is_tr() {
+        return tr.to_string();
+    }
+    if let Some(s) = lookup(tr) {
+        return s.to_string();
+    }
+    match tr.split_once("  (") {
+        Some((words, key)) => format!("{}  ({key}", t(words)),
+        None => t(tr).to_string(),
+    }
+}
+
 /// Inline pair for the rare Turkish word that needs two different English translations
 /// (e.g. "Açık" = "Light" theme vs "On" toggle). Other languages key it by the English text.
 pub fn tx(tr: &'static str, en: &'static str) -> &'static str {

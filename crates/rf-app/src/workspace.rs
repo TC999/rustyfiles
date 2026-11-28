@@ -1309,6 +1309,12 @@ impl Workspace {
                 cx.defer(move |cx| crate::open_main_window(Some(loc), None, Some(WindowBounds::Windowed(b)), cx));
             }
             FolderEvent::QuickLook => this.toggle_quick_look(cx),
+            // (Windows' own Open / Save dialog closes on Escape: ours too, issue 389)
+            FolderEvent::Escape => {
+                if this.picker.is_some() {
+                    crate::picker::cancel(this, window);
+                }
+            }
             FolderEvent::StartFilter(text) => {
                 // the first letter opens the bar with it; the next ones are typed into the bar, which has the focus now
                 let q = format!("{}{text}", emitter.read(cx).filter.query);
@@ -2294,11 +2300,14 @@ impl Workspace {
 
     /// Searches the active tab's folder and its subfolders for `q`, and remembers the search.
     fn run_search(&mut self, q: String, window: &mut Window, cx: &mut Context<Self>) {
+        // (a page that is no folder, Home: every indexed drive, the empty root; it searched nothing at all before, issue 377)
         let root = match self.active_tab().read(cx).location() {
-            Location::Search { root, .. } => Some(root.clone()),
-            l => l.path().map(Path::to_path_buf),
+            Location::Search { root, .. } => root.clone(),
+            l => l.path().map(Path::to_path_buf).unwrap_or_default(),
         };
-        let (false, Some(root)) = (q.is_empty(), root) else { return };
+        if q.is_empty() {
+            return;
+        }
         crate::settings::update(cx, |s| remember_search(&mut s.search_history, &q));
         self.active_tab().clone().update(cx, |v, cx| v.navigate(Location::Search { root, query: q }, cx));
         self.focus_active(window, cx);
@@ -3415,8 +3424,9 @@ impl Workspace {
             tab.update(cx, |v, cx| {
                 v.set_query(String::new(), cx);
                 // leave a recursive search result back to its folder
+                // (a search started on Home has no folder: back to Home)
                 if let Location::Search { root, .. } = v.location().clone() {
-                    v.navigate(Location::Path(root), cx);
+                    v.navigate(if root.as_os_str().is_empty() { Location::Home } else { Location::Path(root) }, cx);
                 }
             });
         }
@@ -3466,7 +3476,7 @@ impl Workspace {
 
         let cmd = |id: &'static str, icon: L, tip: &'static str, enabled: bool, look: crate::toolbar_layout::Look, cx: &mut Context<Self>, run: fn(&mut Self, &mut Window, &mut Context<Self>)| {
             // (the word is the tooltip's, without its key: "Kes  (Ctrl+X)" is "Kes")
-            let word = look.word_shown(false).then(|| crate::i18n::t(tip).split("  ").next().unwrap_or_default().to_string());
+            let word = look.word_shown(false).then(|| crate::i18n::t_tip(tip).split("  ").next().unwrap_or_default().to_string());
             div()
                 .id(id)
                 .h(px(32.))
@@ -3477,7 +3487,7 @@ impl Workspace {
                 .items_center()
                 .rounded(theme::RADIUS_SM)
                 .text_color(if enabled { p.text } else { p.text_tertiary })
-                .tooltip(move |w, cx| gpui_kit::component::tooltip::Tooltip::new(crate::i18n::t(tip)).build(w, cx))
+                .tooltip(move |w, cx| gpui_kit::component::tooltip::Tooltip::new(crate::i18n::t_tip(tip)).build(w, cx))
                 .when(enabled, |d| {
                     d.hover(|s| s.bg(p.hover))
                         .active(|s| s.bg(p.pressed))
@@ -3487,6 +3497,10 @@ impl Workspace {
                 .children(word.map(|w| div().whitespace_nowrap().child(w)))
         };
         let hidden_shown = self.active_tab().read(cx).filter.show_hidden;
+        let (can_undo, can_redo) = {
+            let (u, r) = crate::undo::next_labels();
+            (u.is_some(), r.is_some())
+        };
         let (ext_shown, dual_on, shelf_on) = (cx.global::<crate::settings::Settings>().show_extensions, self.tabs[self.active].right.is_some(), self.shelf_open);
         let popups_open = self.popups_open(cx);
         let drop = |id: &'static str, icon: L, label: Option<&'static str>, tip: &'static str, enabled: bool, look: crate::toolbar_layout::Look, cx: &mut Context<Self>, which: fn(&Self, &App) -> crate::ctx_menu::BarMenu| {
@@ -3624,8 +3638,9 @@ impl Workspace {
                 }),
                 "refresh" => extra("refresh").then(|| cmd("cb-refresh", L::RotateCw, "Yenile  (F5)", true, look("refresh"), cx, |_, w, cx| w.dispatch_action(Box::new(Refresh), cx)).into_any_element()),
                 // (off unless asked for; issue 258: "keep the Repeat/Undo button visible in the navigation bar")
-                "undo" => extra("undo").then(|| cmd("cb-undo", L::Undo2, "Geri al  (Ctrl+Z)", true, look("undo"), cx, |_, w, cx| w.dispatch_action(Box::new(Undo), cx)).into_any_element()),
-                "redo" => extra("redo").then(|| cmd("cb-redo", L::Redo2, "Yinele  (Ctrl+Y)", true, look("redo"), cx, |_, w, cx| w.dispatch_action(Box::new(Redo), cx)).into_any_element()),
+                // (greyed while there is nothing to undo or redo, as the "..." menu's rows are: issue 414)
+                "undo" => extra("undo").then(|| cmd("cb-undo", L::Undo2, "Geri al  (Ctrl+Z)", can_undo, look("undo"), cx, |_, w, cx| w.dispatch_action(Box::new(Undo), cx)).into_any_element()),
+                "redo" => extra("redo").then(|| cmd("cb-redo", L::Redo2, "Yinele  (Ctrl+Y)", can_redo, look("redo"), cx, |_, w, cx| w.dispatch_action(Box::new(Redo), cx)).into_any_element()),
                 // (off unless asked for; issue 406: the "..." menu's selection commands on the bar)
                 "selectall" => extra("selectall").then(|| {
                     cmd("cb-selectall", L::SquareCheck, "Tümünü seç", in_folder, look("selectall"), cx, |this, _, cx| {
@@ -4279,6 +4294,10 @@ impl Workspace {
         let no_fill = gpui_kit::hsla(0., 0., 0., 0.);
         let sidebar_scroll = self.side_tree.scroll_handle().clone();
         let sidebar_scrollable = sidebar_scroll.max_offset().y > px(0.);
+        // The Windows look's wide scrollbar with its track and arrows only where Windows itself draws scrollbars always (Settings ›
+        // Accessibility › Visual effects); otherwise the thin one that shows while scrolling, as Explorer's own and our list's (issue
+        // 419: it stood there wide whatever that setting said).
+        let classic_bar = explorer_look && sidebar_scrollable && rf_win::scrollbars::always_shown();
         let header = |t: &'static str| {
             if rail {
                 let d = div().mx_2().my_2().h(px(1.));
@@ -4614,10 +4633,18 @@ impl Workspace {
                     .children(pins_top)
                     .child(col)
                     // the folder tree's sideways bar, while a deep row has the tree moved or able to move (issue 359)
-                    .children((!rail).then(|| self.tree_sideways_bar(if explorer_look && sidebar_scrollable { 20. } else { 0. }, scrollbar_thumb, scrollbar_thumb_hover, cx)).flatten())
+                    .children((!rail).then(|| self.tree_sideways_bar(if classic_bar { 20. } else { 0. }, scrollbar_thumb, scrollbar_thumb_hover, cx)).flatten())
                     // the Windows look's scrollbar, only while there is something to scroll (issue 229: it stood there with nothing to
                     // scroll, a thumb drawn on an empty track)
-                    .when(explorer_look && sidebar_scrollable, |d| d.child(
+                    .when(explorer_look && sidebar_scrollable && !classic_bar, |d| {
+                        d.child(
+                            gpui_kit::component::scroll::Scrollbar::vertical(&sidebar_scroll)
+                                .id(if rail { "sidebar-scrollbar-rail" } else { "sidebar-scrollbar" })
+                                .mode(crate::folder_view::scrollbar_mode())
+                                .viewport_from_layout(),
+                        )
+                    })
+                    .when(classic_bar, |d| d.child(
                         div()
                             .id("sidebar-scrollbar-track")
                             .absolute()
@@ -5829,6 +5856,10 @@ impl Render for Workspace {
                         .when(!side_by_side, |d| d.w_full())
                         .relative()
                         .capture_any_mouse_down(cx.listener(move |this, _: &MouseDownEvent, _, cx| {
+                            // (in the Open / Save dialog: a pick of the user's own from now on, see PickSession::touched)
+                            if let Some(s) = this.picker() {
+                                s.touched.set(true);
+                            }
                             this.set_active_pane(is_right, cx)
                         }))
                         .child(view)
@@ -6205,7 +6236,14 @@ impl Render for Workspace {
                             .when(!windows_theme && compact, |d| d.rounded_tl(theme::RADIUS).border_l_1().border_t_1().border_color(p.border))
                             .children(content_commandbar)
                             .children(filter_strip)
-                            .child(main_row)
+                            // (in the Open / Save dialog, a click in the list is the user's own pick: PickSession::touched)
+                            .child(div().flex_1().min_h_0().flex().flex_col().when(self.picker.is_some(), |d| {
+                                d.capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, _| {
+                                    if let Some(s) = this.picker() {
+                                        s.touched.set(true);
+                                    }
+                                }))
+                            }).child(main_row))
                             // the floating card of a running operation (Settings → Aktarım ilerlemesi → Yüzen kart)
                             .children(cards)
                             .children(star_strip)
@@ -6215,7 +6253,22 @@ impl Render for Workspace {
                             // Windows' own Open / Save keys in rustyfiles' dialog (issue 389): Alt+S saves, Alt+O opens (a folder dialog
                             // takes either), Alt+N goes to the name box; from the list or from the box
                             .when(self.picker.is_some(), |d| {
+                                // the list's arrow keys pick as a click does (PickSession::touched); Escape, when nothing in the
+                                // window took it, closes the dialog as Windows' own does (issue 389)
                                 d.capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                                    let Some(s) = this.picker() else { return };
+                                    let k = &ev.keystroke;
+                                    let nav = matches!(k.key.as_str(), "up" | "down" | "left" | "right" | "home" | "end" | "pageup" | "pagedown");
+                                    if nav && !s.name.read(cx).focus_handle(cx).is_focused(window) {
+                                        s.touched.set(true);
+                                    }
+                                    // (Escape in the name box; in the list it is the list's, which tells us: FolderEvent::Escape)
+                                    if k.key == "escape" && !k.modifiers.modified() && s.name.read(cx).focus_handle(cx).is_focused(window) {
+                                        cx.stop_propagation();
+                                        crate::picker::cancel(this, window);
+                                    }
+                                }))
+                                .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                                     let k = &ev.keystroke;
                                     if !k.modifiers.alt || k.modifiers.control || k.modifiers.shift {
                                         return;

@@ -186,10 +186,12 @@ extension AppSettings {
 
     // MARK: command bar buttons
 
-    /// The command bar's buttons (settings_view.rs "Toolbar buttons"); the last four are off
-    /// unless asked for.
+    /// The command bar's buttons (settings_view.rs "Toolbar buttons"); the optional ones are
+    /// off unless asked for.
     enum ToolbarButton: String, CaseIterable {
-        case new, newFolder, cut, copy, paste, rename, share, delete, properties, terminal, hidden, refresh, filter, sort, view, preview
+        case new, newFolder, cut, copy, paste, rename, share, delete, properties, terminal, hidden, refresh
+        case undo, redo, selectAll, selectNone, invertSelection, extensions, dualPane, shelf
+        case filter, sort, view, preview
 
         var title: String {
             switch self {
@@ -205,6 +207,14 @@ extension AppSettings {
             case .terminal: String(localized: "Open in Terminal")
             case .hidden: String(localized: "Show or hide hidden items")
             case .refresh: String(localized: "Refresh")
+            case .undo: String(localized: "Undo")
+            case .redo: String(localized: "Redo")
+            case .selectAll: String(localized: "Select all")
+            case .selectNone: String(localized: "Select none")
+            case .invertSelection: String(localized: "Invert selection")
+            case .extensions: String(localized: "File extensions")
+            case .dualPane: String(localized: "Dual pane")
+            case .shelf: String(localized: "Shelf")
             case .filter: String(localized: "Filter")
             case .sort: String(localized: "Sort")
             case .view: String(localized: "View")
@@ -212,7 +222,10 @@ extension AppSettings {
             }
         }
 
-        var optional: Bool { [.newFolder, .terminal, .hidden, .refresh].contains(self) }
+        var optional: Bool {
+            [.newFolder, .terminal, .hidden, .refresh, .undo, .redo, .selectAll, .selectNone, .invertSelection, .extensions, .dualPane, .shelf]
+                .contains(self)
+        }
     }
 
     static func showsButton(_ b: ToolbarButton) -> Bool {
